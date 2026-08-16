@@ -384,6 +384,7 @@ def _create_default_config(config_path: str, status_file: str | None = None) -> 
             "reattempt_delay": 30,
         },
         "clients": [],
+        "webui": {"suppress_mac_warnings": False},
     }
     with open(p, "w") as f:
         yaml.safe_dump(default_cfg, f, sort_keys=False)

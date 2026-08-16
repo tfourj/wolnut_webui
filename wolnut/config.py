@@ -39,6 +39,11 @@ class ClientConfig:
 
 
 @dataclass
+class WebUIConfig:
+    suppress_mac_warnings: bool = False
+
+
+@dataclass
 class WolnutConfig:
     nut: NutConfig
     status_file: str
@@ -46,6 +51,7 @@ class WolnutConfig:
     wake_on: WakeOnConfig = field(default_factory=WakeOnConfig)
     clients: list[ClientConfig] = field(default_factory=list)
     log_level: str = "INFO"
+    webui: WebUIConfig = field(default_factory=WebUIConfig)
 
 
 def find_state_file(state_file: Optional[str] = None) -> str:
@@ -84,6 +90,15 @@ def load_config(
     # get wake_on or use defaults
     wake_on = WakeOnConfig(**raw.get("wake_on", {}))
 
+    # get webui settings (new WebUI Settings section)
+    webui_raw = raw.get("webui", {}) or {}
+    # legacy support: top-level suppress_mac_warnings
+    if "suppress_mac_warnings" in raw and "suppress_mac_warnings" not in webui_raw:
+        webui_raw["suppress_mac_warnings"] = raw["suppress_mac_warnings"]
+    # filter to known fields to avoid TypeError on extra keys
+    webui_filtered = {k: v for k, v in webui_raw.items() if k in WebUIConfig.__dataclass_fields__}
+    webui = WebUIConfig(**webui_filtered)
+
     # Determine status file path: CLI arg > config file > default
     final_status_path = status_path or raw.get("status_file")
     # find_state_file will handle None and also ensure the directory exists
@@ -118,6 +133,7 @@ def load_config(
         clients=clients,
         log_level=raw.get("log_level", DEFAULT_LOG_LEVEL).upper(),
         status_file=final_status_path,
+        webui=webui,
     )
     logger.info("Config Imported Successfully")
     for client in wolnut_config.clients:

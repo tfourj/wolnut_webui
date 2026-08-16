@@ -93,6 +93,10 @@ class ClientModel(BaseModel):
     mac: str
 
 
+class WebUIConfigModel(BaseModel):
+    suppress_mac_warnings: bool = False
+
+
 class ConfigModel(BaseModel):
     log_level: str = "INFO"
     poll_interval: int = 15
@@ -100,6 +104,7 @@ class ConfigModel(BaseModel):
     nut: NutModel
     wake_on: WakeOnModel = Field(default_factory=WakeOnModel)
     clients: list[ClientModel] = Field(default_factory=list)
+    webui: WebUIConfigModel = Field(default_factory=WebUIConfigModel)
 
 
 class WolRequest(BaseModel):
@@ -227,6 +232,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                     "reattempt_delay": 30,
                 },
                 "clients": [],
+                "webui": {"suppress_mac_warnings": False},
             }
         # normalize defaults if missing
         raw.setdefault("log_level", "INFO")
@@ -240,6 +246,11 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             "reattempt_delay": 30,
         }.items():
             raw["wake_on"].setdefault(k, v)
+        raw.setdefault("webui", {})
+        # legacy: migrate top-level suppress_mac_warnings into webui
+        if "suppress_mac_warnings" in raw and "suppress_mac_warnings" not in raw["webui"]:
+            raw["webui"]["suppress_mac_warnings"] = raw.pop("suppress_mac_warnings")
+        raw["webui"].setdefault("suppress_mac_warnings", False)
         return raw
 
     @app.get("/api/health")
@@ -291,24 +302,26 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             validate_config(raw)
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
-        # Try to resolve MAC for clients with "auto" and collect warnings
+        # Try to resolve MAC for clients with "auto" and collect warnings (unless suppressed via WebUI Settings)
         warnings: list[dict] = []
-        for c in raw.get("clients", []):
-            if c.get("mac") == "auto":
-                host = c.get("host")
-                name = c.get("name", "?")
-                try:
-                    resolved = resolve_mac_from_host(host)
-                    if resolved:
-                        logger.info("Resolved MAC for %s (%s) -> %s", name, host, resolved)
-                    else:
-                        msg = f"Could not resolve MAC for {name} ({host})"
+        suppress_warnings = raw.get("webui", {}).get("suppress_mac_warnings", False) or raw.get("suppress_mac_warnings", False)
+        if not suppress_warnings:
+            for c in raw.get("clients", []):
+                if c.get("mac") == "auto":
+                    host = c.get("host")
+                    name = c.get("name", "?")
+                    try:
+                        resolved = resolve_mac_from_host(host)
+                        if resolved:
+                            logger.info("Resolved MAC for %s (%s) -> %s", name, host, resolved)
+                        else:
+                            msg = f"Could not resolve MAC for {name} ({host})"
+                            logger.warning(msg)
+                            warnings.append({"client": name, "host": host, "message": msg, "field": "mac"})
+                    except Exception as e:
+                        msg = f"Could not resolve MAC for {name} ({host}): {e}"
                         logger.warning(msg)
                         warnings.append({"client": name, "host": host, "message": msg, "field": "mac"})
-                except Exception as e:
-                    msg = f"Could not resolve MAC for {name} ({host}): {e}"
-                    logger.warning(msg)
-                    warnings.append({"client": name, "host": host, "message": msg, "field": "mac"})
         # save
         try:
             save_raw_config(cfg_path, raw)
