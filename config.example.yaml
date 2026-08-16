@@ -15,6 +15,9 @@ wake_on:
   client_timeout_sec: 600     # Time to wait for client to come back online before logging an error
   reattempt_delay: 30         # Minimum time (in seconds) between WOL attempts per client
 
+webui:
+  suppress_mac_warnings: false  # Set true to hide orange warnings when MAC "auto" cannot be resolved
+
 clients:
   - name: "client 1"                  # Human-readable name
     host: 192.168.0.100               # IP address preferred for reliability
