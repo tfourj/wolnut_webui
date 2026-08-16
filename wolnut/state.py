@@ -194,3 +194,25 @@ class ClientStateTracker:
         # Also reset the meta state for a complete reset
         self.set_ups_on_battery(False)
         self._dirty = True
+
+    def sync_clients(self, clients: List[Any]):
+        """Sync tracker with new client list (hot-reload). Adds new clients, removes deleted ones."""
+        new_names = {c.name for c in clients}
+        # Add new clients
+        for client in clients:
+            if client.name not in self._client_states:
+                self._client_states[client.name] = {
+                    "was_online_before_battery": ASSUME_UNINITIALIZED_ONLINE,
+                    "is_online": False,
+                    "wol_sent": False,
+                    "wol_sent_at": 0,
+                    "skip": False,
+                }
+                self._dirty = True
+                logger.info("Tracking new client: %s", client.name)
+        # Remove deleted clients
+        for name in list(self._client_states.keys()):
+            if name not in new_names:
+                del self._client_states[name]
+                self._dirty = True
+                logger.info("Stopped tracking removed client: %s", name)

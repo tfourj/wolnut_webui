@@ -136,7 +136,7 @@ export default function App() {
     try {
       await saveConfig(cfg)
       setOriginalCfg(JSON.parse(JSON.stringify(cfg)))
-      showToast('Configuration saved — restart container to apply')
+      showToast('Configuration saved — applied dynamically')
     } catch (e: any) {
       setErr(String(e.message || e))
     } finally {

@@ -32,6 +32,17 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
     configure_logger(config.log_level)
     logger.info("WOLNUT started. Monitoring UPS: %s", config.nut.ups)
 
+    # Track config mtime for hot-reload (WebUI can edit without restart)
+    from pathlib import Path as _Path
+
+    def _get_mtime(p: str) -> float:
+        try:
+            return _Path(p).stat().st_mtime
+        except OSError:
+            return 0
+
+    last_mtime = _get_mtime(config_file)
+
     on_battery = False
     recorded_down_clients = set()
     recorded_up_clients = set()
@@ -52,6 +63,36 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
     logger.info("UPS power status: %s, Battery: %s%%", power_status, battery_percent)
 
     while True:
+        # Hot-reload config if file changed (WebUI save)
+        try:
+            cur_mtime = _get_mtime(config_file)
+            if cur_mtime != last_mtime and cur_mtime != 0:
+                logger.info("Config file changed, reloading...")
+                new_config = load_config(config_file, status_path=status_file, verbose=verbose)
+                if new_config:
+                    # Apply new config dynamically
+                    if new_config.log_level != config.log_level:
+                        configure_logger(new_config.log_level)
+                        logger.info("Log level changed to %s", new_config.log_level)
+                    if new_config.status_file != config.status_file:
+                        logger.warning(
+                            "status_file changed from %s to %s — restart recommended for full effect",
+                            config.status_file,
+                            new_config.status_file,
+                        )
+                    config = new_config
+                    # Sync state tracker with new client list
+                    state_tracker.sync_clients(config.clients)
+                    # Reset recorded sets for removed/added clients
+                    recorded_down_clients.intersection_update({c.name for c in config.clients})
+                    recorded_up_clients.intersection_update({c.name for c in config.clients})
+                    logger.info("Config reloaded: %s clients, poll_interval=%s", len(config.clients), config.poll_interval)
+                else:
+                    logger.warning("Failed to reload config, keeping previous config")
+                last_mtime = cur_mtime
+        except Exception as e:
+            logger.warning("Error checking/reloading config: %s", e)
+
         ups_status = get_ups_status(config.nut.ups)
         battery_percent = get_battery_percent(ups_status)
         power_status = ups_status.get("ups.status", "OL")
