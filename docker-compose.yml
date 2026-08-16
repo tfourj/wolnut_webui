@@ -7,11 +7,6 @@ services:
         volumes:
             - ./config:/config
         environment:
-            - WOLNUT_WEB_ENABLED=true
-            - WOLNUT_WEB_HOST=0.0.0.0
-            - WOLNUT_WEB_PORT=8080
-            - WOLNUT_CONFIG_FILE=/config/config.yaml
-            - WOLNUT_STATUS_FILE=/config/wolnut_state.json
             - ADMIN_USERNAME=admin
             - ADMIN_PASSWORD=changeme
             - WOLNUT_JWT_SECRET=change-this-to-a-long-random-secret
