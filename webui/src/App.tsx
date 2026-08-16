@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchConfig, saveConfig, fetchStatus, sendWolClient, resolveMac, pingHost, WolnutConfig } from './api'
+import { fetchConfig, saveConfig, fetchStatus, sendWolClient, resolveMac, pingHost, WolnutConfig, getAuthStatus, login as apiLogin, getMe, clearToken, getToken } from './api'
 
 type Tab = 'dashboard' | 'config' | 'clients'
 
@@ -21,6 +21,9 @@ export default function App() {
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [authEnabled, setAuthEnabled] = useState<boolean | null>(null)
+  const [authUser, setAuthUser] = useState<string | null>(null)
+  const [authChecking, setAuthChecking] = useState(true)
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -28,6 +31,38 @@ export default function App() {
   }
 
   const isDirty = !!cfg && !!originalCfg && JSON.stringify(cfg) !== JSON.stringify(originalCfg)
+
+  const checkAuth = async () => {
+    try {
+      const st = await getAuthStatus()
+      setAuthEnabled(st.auth_enabled)
+      if (!st.auth_enabled) {
+        setAuthUser(null)
+        setAuthChecking(false)
+        return true
+      }
+      const token = getToken()
+      if (!token) {
+        setAuthChecking(false)
+        return false
+      }
+      try {
+        const me = await getMe()
+        setAuthUser(me.user)
+        setAuthChecking(false)
+        return true
+      } catch {
+        clearToken()
+        setAuthUser(null)
+        setAuthChecking(false)
+        return false
+      }
+    } catch {
+      setAuthEnabled(false)
+      setAuthChecking(false)
+      return true
+    }
+  }
 
   const load = async () => {
     setLoading(true)
@@ -37,20 +72,37 @@ export default function App() {
       setCfg(c)
       setOriginalCfg(JSON.parse(JSON.stringify(c)))
     } catch (e: any) {
-      setErr(String(e.message || e))
+      const msg = String(e.message || e)
+      if (msg.includes('401') || msg.toLowerCase().includes('not authenticated') || msg.toLowerCase().includes('invalid token')) {
+        clearToken()
+        setAuthUser(null)
+      }
+      setErr(msg)
     } finally {
       setLoading(false)
     }
     try {
       const s = await fetchStatus()
       setStatus(s)
-    } catch {
-      // ignore
+    } catch (e: any) {
+      const msg = String(e.message || e)
+      if (msg.includes('401') || msg.toLowerCase().includes('not authenticated')) {
+        clearToken()
+        setAuthUser(null)
+      }
     }
   }
 
   useEffect(() => {
-    load()
+    checkAuth().then(ok => {
+      if (ok) load()
+      else setLoading(false)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (authChecking) return
+    if (authEnabled && !authUser) return
     const id = setInterval(async () => {
       try {
         const s = await fetchStatus()
@@ -58,7 +110,24 @@ export default function App() {
       } catch {}
     }, 5000)
     return () => clearInterval(id)
-  }, [])
+  }, [authChecking, authEnabled, authUser])
+
+  // re-check after login
+  const handleLoggedIn = async (user: string) => {
+    setAuthUser(user)
+    setLoading(true)
+    await load()
+  }
+
+  const handleLogout = async () => {
+    clearToken()
+    setAuthUser(null)
+    setCfg(null)
+    setStatus(null)
+    setAuthEnabled(null)
+    setAuthChecking(true)
+    await checkAuth()
+  }
 
   const onSave = async () => {
     if (!cfg) return
@@ -73,6 +142,24 @@ export default function App() {
     } finally {
       setSaving(false)
     }
+  }
+
+  if (authChecking) {
+    return (
+      <div className="container">
+        <p style={{ color: '#9aa0ae' }}>Checking authentication...</p>
+      </div>
+    )
+  }
+  if (authEnabled && !authUser) {
+    return (
+      <div className="container">
+        <div className="header">
+          <h1>🥜 Wolnut<span>UPS Wake-on-LAN</span></h1>
+        </div>
+        <Login onLoggedIn={handleLoggedIn} />
+      </div>
+    )
   }
 
   if (loading) {
@@ -91,6 +178,8 @@ export default function App() {
           <span>UPS Wake-on-LAN</span>
         </h1>
         <div className="header-actions">
+          {authEnabled && authUser && <span style={{ color: '#9aa0ae', fontSize: 13, marginRight: 4 }}>{authUser}</span>}
+          {authEnabled && authUser && <button className="btn btn-ghost" onClick={handleLogout}>Logout</button>}
           <button className="btn btn-ghost" onClick={load}>Refresh</button>
           {isDirty && (
             <button className="btn btn-primary" onClick={onSave} disabled={saving}>
@@ -124,6 +213,46 @@ export default function App() {
       <p style={{ color: '#9aa0ae', fontSize: 12, marginTop: 24, textAlign: 'center' }}>
         Config file: <code>{status?.config_path || '/config/config.yaml'}</code> · Status file: <code>{status?.status_path || cfg?.status_file}</code>
       </p>
+    </div>
+  )
+}
+
+function Login({ onLoggedIn }: { onLoggedIn: (user: string) => void }) {
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setErr(null)
+    setBusy(true)
+    try {
+      const j = await apiLogin(username, password)
+      onLoggedIn(username)
+    } catch (e: any) {
+      setErr(String(e.message || e).replace('{"detail":"', '').replace('"}', ''))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="card" style={{ maxWidth: 420, margin: '40px auto' }}>
+      <h2>Sign in</h2>
+      <p className="desc">Enter ADMIN_USERNAME / ADMIN_PASSWORD to access Wolnut</p>
+      <form onSubmit={submit}>
+        <div className="field">
+          <label>Username</label>
+          <input value={username} onChange={e => setUsername(e.target.value)} placeholder="admin" autoFocus />
+        </div>
+        <div className="field">
+          <label>Password</label>
+          <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" />
+        </div>
+        {err && <div style={{ color: '#e74c3c', fontSize: 13, marginBottom: 10, whiteSpace: 'pre-wrap' }}>{err}</div>}
+        <button className="btn btn-primary" type="submit" disabled={busy} style={{ width: '100%' }}>
+          {busy ? 'Signing in...' : 'Sign in'}
+        </button>
+      </form>
     </div>
   )
 }

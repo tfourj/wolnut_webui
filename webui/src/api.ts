@@ -28,14 +28,55 @@ export interface WolnutConfig {
   clients: ClientConfig[]
 }
 
+const TOKEN_KEY = 'wolnut_token'
+export function getToken(): string | null {
+  try { return localStorage.getItem(TOKEN_KEY) } catch { return null }
+}
+export function setToken(t: string) { try { localStorage.setItem(TOKEN_KEY, t) } catch {} }
+export function clearToken() { try { localStorage.removeItem(TOKEN_KEY) } catch {} }
+function authHeaders(): Record<string, string> {
+  const t = getToken()
+  return t ? { Authorization: `Bearer ${t}` } : {}
+}
+async function authFetch(url: string, opts: RequestInit = {}) {
+  const headers = { ...(opts.headers as Record<string, string> || {}), ...authHeaders() }
+  return fetch(url, { ...opts, headers })
+}
+
+export async function getAuthStatus(): Promise<{ auth_enabled: boolean; user?: string | null }> {
+  const res = await fetch('/api/auth/status')
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+export async function login(username: string, password: string) {
+  const res = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  const j = await res.json()
+  if (j.access_token) setToken(j.access_token)
+  return j as { access_token: string; token_type: string }
+}
+export async function getMe() {
+  const res = await authFetch('/api/auth/me')
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+export async function logout() {
+  try { await authFetch('/api/auth/logout', { method: 'POST' }) } catch {}
+  clearToken()
+}
+
 export async function fetchConfig(): Promise<WolnutConfig> {
-  const res = await fetch('/api/config')
+  const res = await authFetch('/api/config')
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export async function saveConfig(cfg: WolnutConfig) {
-  const res = await fetch('/api/config', {
+  const res = await authFetch('/api/config', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(cfg),
@@ -48,13 +89,13 @@ export async function saveConfig(cfg: WolnutConfig) {
 }
 
 export async function fetchStatus() {
-  const res = await fetch('/api/status')
+  const res = await authFetch('/api/status')
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export async function sendWol(mac: string) {
-  const res = await fetch('/api/wol', {
+  const res = await authFetch('/api/wol', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ mac }),
@@ -64,13 +105,13 @@ export async function sendWol(mac: string) {
 }
 
 export async function sendWolClient(name: string) {
-  const res = await fetch(`/api/wol/client/${encodeURIComponent(name)}`, { method: 'POST' })
+  const res = await authFetch(`/api/wol/client/${encodeURIComponent(name)}`, { method: 'POST' })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 
 export async function resolveMac(host: string) {
-  const res = await fetch('/api/resolve-mac', {
+  const res = await authFetch('/api/resolve-mac', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ host }),
@@ -80,7 +121,7 @@ export async function resolveMac(host: string) {
 }
 
 export async function pingHost(host: string) {
-  const res = await fetch('/api/ping', {
+  const res = await authFetch('/api/ping', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ host }),
