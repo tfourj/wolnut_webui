@@ -41,4 +41,6 @@ htmlcov/
 # pytest code
 tests/
 
-# 
+# WebUI - ignore local build artifacts (rebuilt in docker)
+webui/node_modules/
+webui/dist/

@@ -17,4 +17,6 @@ mp-test.py
 # Ignore detail coverage report
 coverage/
 .coverage
+webui/node_modules/
+webui/dist/
 
