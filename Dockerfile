@@ -35,13 +35,21 @@ RUN mkdir wolnut && echo '__version__ = "0.0.0"' > wolnut/__init__.py && touch R
 COPY pyproject.toml uv.lock ./
 
 # Init environment and install dependencies.
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-install-project --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --no-install-project --no-dev
 
 # Copy the application.
 COPY . .
 
 # Install project in .venv
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --no-editable
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --no-dev --no-editable
+
+# WebUI builder
+FROM --platform=${TARGETPLATFORM} node:20-slim AS web-builder
+WORKDIR /webui
+COPY webui/package.json ./
+RUN npm install
+COPY webui/ ./
+RUN npm run build
 
 # Runner
 FROM --platform=${TARGETPLATFORM} python:3.13-slim AS runner
@@ -62,5 +70,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy installed packages from builder.
 COPY --from=builder /app/.venv /app/.venv
 
-# Run the script
+# Copy WebUI build
+COPY --from=web-builder /webui/dist /app/webui/dist
+
+WORKDIR /app
+
+EXPOSE 8080
+
+# Run the service (monitoring loop + WebUI on :8080)
 CMD ["wolnut"]
