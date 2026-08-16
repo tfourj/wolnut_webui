@@ -39,6 +39,5 @@ jobs:
           push: true
           tags: |
             ghcr.io/tfourj/wolnut_webui:latest
-            ghcr.io/tfourj/wolnut_webui:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
