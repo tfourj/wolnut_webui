@@ -75,7 +75,7 @@ COPY --from=web-builder /webui/dist /app/webui/dist
 
 WORKDIR /app
 
-EXPOSE 8080
+EXPOSE 8183
 
-# Run the service (monitoring loop + WebUI on :8080)
+# Run the service (monitoring loop + WebUI on :8183)
 CMD ["wolnut"]
