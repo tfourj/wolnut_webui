@@ -1,77 +1,47 @@
-# Quickstart Guide
+# Quickstart
 
-This guide will help you get `wolnut` running in a few simple steps using Docker.
+WebUI is always running — all configuration is done there. No manual `config.yaml` editing needed.
 
-## Prerequisites
+## 1. Make dir
 
-- Docker installed and running.
-- A NUT (Network UPS Tools) server monitoring your UPS. See [Techno Tim's](https://technotim.live/posts/NUT-server-guide/) guide
-- The IP address or hostname of your NUT server, probably localhost.
-- The name of the UPS as configured in NUT (e.g., `ups`).
+```bash
+mkdir -p ~/wolnut/config && cd ~/wolnut
+```
 
-## Step 1: Create Configuration Directory and File
+## 2. Download compose
 
-`wolnut` needs a configuration file to run. It's best to store this outside the container.
+With command:
 
-1.  Create a directory to hold your configuration:
-    ```bash
-    mkdir ~/wolnut
-    ```
+```bash
+curl -O https://raw.githubusercontent.com/tfourj/wolnut_webui/main/docker-compose.yml
+# or
+wget https://raw.githubusercontent.com/tfourj/wolnut_webui/main/docker-compose.yml
+```
 
-2.  Create an empty configuration file inside that directory:
-    ```bash
-    touch ~/wolnut/config.yaml
-    ```
+Or manually download `docker-compose.yml` from the repo and place it in `~/wolnut/`.
 
-## Step 2: Configure `config.yaml`
+## 3. Change .envs
 
-Open `~/wolnut/config.yaml` in your favorite text editor and add the following minimal configuration. Be sure to replace the placeholder values with your actual details.
+Edit `docker-compose.yml` and set:
 
 ```yaml
-# ~/wolnut/config.yaml
-
-nut:
-  # The name of your UPS as defined in your NUT server configuration.
-  # Format: <ups-name>
-  ups: "ups"
-  hostname: "127.0.0.1"  # not needed if running localhost/127.0.0.1
-
-# The directory for the status file should be writable. It will be created if it doesn't exist.
-status_file: "/config/wolnut_state.json" 
-
-clients:
-  - name: "my-pc"
-    host: "192.168.1.100" # IP address or hostname of the client machine
-    mac: "DE:AD:BE:EF:00:01" # MAC address of the client machine
+environment:
+  - ADMIN_USERNAME=admin
+  - ADMIN_PASSWORD=changeme
+  - WOLNUT_JWT_SECRET=change-this-to-a-long-random-secret
 ```
 
-For more advanced options, see the [Configuration](configuration.md) Guide.
+Change to secure values. `ADMIN_USERNAME`/`ADMIN_PASSWORD` are the WebUI login.
 
-## Step 3: Run the Docker Container
-
-Run the following command to start the `wolnut` container. The `--network host` flag is required for Wake-on-LAN and for `wolnut` to communicate with your NUT server on the local network.
+## 4. Run compose
 
 ```bash
-docker run -d \
-  --name wolnut \
-  --restart unless-stopped \
-  --network host \
-  -v ~/wolnut:/config \
-  hardwarehaven/wolnut:latest
+docker pull ghcr.io/tfourj/wolnut_webui:latest
+docker compose up -d
 ```
 
-### Docker Compose
+Requires `network_mode: host` for Wake-on-LAN — do not add `ports`.
 
-See [docker-compose.yml](docker-compose.yml) for an example docker compose file
+## 5. Setup in WebUI
 
-## Step 4: Check the Logs
-
-You can check the logs to ensure `wolnut` started correctly and is monitoring your UPS.
-
-```bash
-docker logs wolnut
-```
-
-You should see output indicating that `wolnut` has started and successfully connected to your NUT server.
-
-That's it! `wolnut` is now running and will automatically wake your configured clients after a power outage.
+Open `http://<host>:8080` (or `8183` if using `docker-compose-local.yml`), log in with `ADMIN_USERNAME` / `ADMIN_PASSWORD`, then configure NUT and clients under **Configuration** and **Clients**. All settings are hot-reloaded — no restart needed.

@@ -1,37 +1,27 @@
 # WOLNUT
 
-**WOLNUT** is a lightweight Python service designed to work alongside [NUT (Network UPS Tools)](https://networkupstools.org/) to automatically send Wake-on-LAN (WOL) packets to client systems after a power outage.
-
-wolnut... get it?
+**WOLNUT** is a lightweight service for NUT (Network UPS Tools) that sends Wake-on-LAN to clients after power is restored.
 
 ## What It Does
 
-When a UPS (connected to NUT) switches to battery power, WOLNUT:
+1. Detects `OB`/`OL` via `upsc`
+2. Snapshots online clients at `OB`
+3. Waits `restore_delay_sec` + `min_battery_percent`
+4. Sends WOL to clients that were online before outage
 
-1. Detects the power event via `upsc`
-2. Tracks which clients were online before the outage
-3. Waits for power to be restored and the battery to reach a safe threshold
-4. Sends WOL packets to bring back any systems that powered down
-
-This helps reboot systems automatically after a controlled shutdown caused by a power loss — especially useful for homelabs, small servers, and media boxes.
-
----
-
-## Features
-
-- Auto-detect MAC addresses with ARP
-- Tracks online status of clients via ping
-- Supports NUT with or without authentication
-- Persistent state file for post-reboot recovery
-- Runs as a standalone Python service or Docker container
-
----
+For homelabs / servers after controlled NUT shutdown.
 
 ## Quickstart
 
-See the [Quickstart](docs/quickstart.md) guide.
+See [Quickstart](docs/quickstart.md):
 
-### Docker Compose
+```bash
+mkdir -p ~/wolnut/config && cd ~/wolnut
+curl -O https://raw.githubusercontent.com/tfourj/wolnut_webui/main/docker-compose.yml
+# edit ADMIN_USERNAME / ADMIN_PASSWORD / WOLNUT_JWT_SECRET in docker-compose.yml
+docker pull ghcr.io/tfourj/wolnut_webui:latest
+docker compose up -d
+# open http://<host>:8080 -> setup NUT + clients in WebUI
+```
 
-See [docker-compose.yml](docker-compose.yml) for an example docker compose file
-
+WebUI is always on. No manual `config.yaml` needed.

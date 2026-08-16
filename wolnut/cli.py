@@ -284,14 +284,13 @@ def wolnut(
     if verbose:
         configure_logger("DEBUG")
 
-    # Decide whether to enable webui
-    # Priority: --no-web > --web flag > WOLNUT_WEB_ENABLED env > default false (enabled via docker-compose)
-    web_enabled = False
-    env_flag = os.getenv("WOLNUT_WEB_ENABLED", "false").lower()
-    if env_flag in ("1", "true", "yes", "on"):
-        web_enabled = True
+    # WebUI always runs by default; --no-web or WOLNUT_WEB_ENABLED=false disables it
+    web_enabled = True
+    env_flag = os.getenv("WOLNUT_WEB_ENABLED", "true").lower()
     if env_flag in ("0", "false", "no", "off"):
         web_enabled = False
+    if env_flag in ("1", "true", "yes", "on"):
+        web_enabled = True
     if web is True:
         web_enabled = True
     if no_web:
