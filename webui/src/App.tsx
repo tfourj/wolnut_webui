@@ -24,6 +24,7 @@ export default function App() {
   const [authEnabled, setAuthEnabled] = useState<boolean | null>(null)
   const [authUser, setAuthUser] = useState<string | null>(null)
   const [authChecking, setAuthChecking] = useState(true)
+  const [saveWarnings, setSaveWarnings] = useState<any[]>([])
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -133,10 +134,18 @@ export default function App() {
     if (!cfg) return
     setSaving(true)
     setErr(null)
+    setSaveWarnings([])
     try {
-      await saveConfig(cfg)
+      const res: any = await saveConfig(cfg)
       setOriginalCfg(JSON.parse(JSON.stringify(cfg)))
-      showToast('Configuration saved — applied dynamically')
+      if (res.warnings && res.warnings.length > 0) {
+        setSaveWarnings(res.warnings)
+        showToast(`Configuration saved — ${res.warnings.length} MAC warning(s)`)
+      } else {
+        showToast('Configuration saved — applied dynamically')
+      }
+      // auto-switch to clients tab if warnings
+      if (res.warnings && res.warnings.length > 0) setTab('clients')
     } catch (e: any) {
       setErr(String(e.message || e))
     } finally {
@@ -206,7 +215,7 @@ export default function App() {
 
       {tab === 'dashboard' && <Dashboard cfg={cfg} status={status} showToast={showToast} />}
       {tab === 'config' && cfg && <ConfigForm cfg={cfg} setCfg={setCfg} />}
-      {tab === 'clients' && cfg && <ClientsTab cfg={cfg} setCfg={setCfg} status={status} showToast={showToast} />}
+      {tab === 'clients' && cfg && <ClientsTab cfg={cfg} setCfg={setCfg} status={status} showToast={showToast} warnings={saveWarnings} />}
 
       {toast && <div className="toast">{toast}</div>}
 
@@ -564,11 +573,13 @@ function ClientsTab({
   setCfg,
   status,
   showToast,
+  warnings = [],
 }: {
   cfg: WolnutConfig
   setCfg: (c: WolnutConfig) => void
   status: any
   showToast: (m: string) => void
+  warnings?: any[]
 }) {
   const updateClient = (idx: number, patch: Partial<WolnutConfig['clients'][number]>) => {
     const next = [...cfg.clients]
@@ -587,9 +598,17 @@ function ClientsTab({
 
   const liveMap = new Map<string, boolean>()
   for (const c of status?.clients || []) liveMap.set(c.name, c.online)
+  const warningMap = new Map<string, any>()
+  for (const w of warnings || []) if (w.client) warningMap.set(w.client, w)
 
   return (
     <div className="card">
+      {warnings && warnings.length > 0 && (
+        <div style={{ background: '#2a2015', border: '1px solid #f1c40f', color: '#f1c40f', borderRadius: 8, padding: '10px 12px', marginBottom: 12, fontSize: 13 }}>
+          <strong style={{ display: 'block', marginBottom: 4 }}>⚠ MAC resolution warning</strong>
+          <span style={{ color: '#e6e8ec' }}>{warnings.length} client(s) with MAC "auto" could not be resolved. They will be retried at runtime, but WOL may fail if the host is unreachable.</span>
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <div>
           <h2 style={{ margin: 0 }}>Clients</h2>
@@ -602,11 +621,17 @@ function ClientsTab({
 
       {cfg.clients.map((c, idx) => {
         const online = liveMap.get(c.name)
+        const w = warningMap.get(c.name)
         return (
-          <div key={idx} className="card" style={{ background: '#0f1115', padding: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+          <div key={idx} className="card" style={{ background: '#0f1115', padding: 16, borderColor: w ? '#f1c40f' : undefined }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
               <strong>#{idx + 1} — {c.name || 'Unnamed'}</strong>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                {w && (
+                  <span style={{ background: '#2a2015', border: '1px solid #f1c40f', color: '#f1c40f', padding: '2px 8px', borderRadius: 999, fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    ⚠ MAC unresolved
+                  </span>
+                )}
                 {online !== undefined && (
                   <span className={`badge ${online ? 'online' : 'offline'}`} style={{ fontSize: 11 }}>
                     {online ? 'Online' : 'Offline'}
@@ -627,8 +652,19 @@ function ClientsTab({
               </div>
               <div className="field">
                 <label>MAC address</label>
-                <input value={c.mac} onChange={e => updateClient(idx, { mac: e.target.value })} placeholder="38:f7:cd:c5:87:6b or auto" />
+                <input
+                  value={c.mac}
+                  onChange={e => updateClient(idx, { mac: e.target.value })}
+                  placeholder="38:f7:cd:c5:87:6b or auto"
+                  style={warningMap.get(c.name) ? { borderColor: '#f1c40f', background: '#2a2015' } : undefined}
+                />
                 <span className="inline-help">Use "auto" to resolve via ARP at runtime</span>
+                {warningMap.get(c.name) && (
+                  <div style={{ background: '#2a2015', border: '1px solid #f1c40f', color: '#f1c40f', borderRadius: 6, padding: '6px 8px', fontSize: 12, marginTop: 6, display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <span>⚠</span>
+                    <span style={{ color: '#e6e8ec' }}>{warningMap.get(c.name).message} — WOL may fail until host is reachable.</span>
+                  </div>
+                )}
               </div>
               <div className="field">
                 <label>Actions</label>
