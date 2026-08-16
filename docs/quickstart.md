@@ -44,4 +44,4 @@ Requires `network_mode: host` for Wake-on-LAN — do not add `ports`.
 
 ## 5. Setup in WebUI
 
-Open `http://<host>:8080` (or `8183` if using `docker-compose-local.yml`), log in with `ADMIN_USERNAME` / `ADMIN_PASSWORD`, then configure NUT and clients under **Configuration** and **Clients**. All settings are hot-reloaded — no restart needed.
+Open `http://<host>:8183`, log in with `ADMIN_USERNAME` / `ADMIN_PASSWORD`, then configure NUT and clients under **Configuration** and **Clients**. All settings are hot-reloaded — no restart needed.

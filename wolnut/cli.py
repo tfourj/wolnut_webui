@@ -257,7 +257,7 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
 @click.option(
     "--web-port",
     envvar="WOLNUT_WEB_PORT",
-    default=8080,
+    default=8183,
     type=int,
     help="WebUI port",
 )
@@ -407,7 +407,7 @@ def _create_default_config(config_path: str, status_file: str | None = None) -> 
     help="The status filepath to load.",
 )
 @click.option("--host", envvar="WOLNUT_WEB_HOST", default="0.0.0.0", help="Host to bind")
-@click.option("--port", envvar="WOLNUT_WEB_PORT", default=8080, type=int, help="Port to bind")
+@click.option("--port", envvar="WOLNUT_WEB_PORT", default=8183, type=int, help="Port to bind")
 def web_only(config_file: str | None, status_file: str | None, host: str, port: int):
     """Run only the WebUI (no monitoring loop). Useful for config editing."""
     logging.basicConfig(

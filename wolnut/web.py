@@ -501,7 +501,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
 # Threaded server launcher (used by CLI)
 # ---------------------------------------------------------------------------
 
-def start_web_server(host: str = "0.0.0.0", port: int = 8080, config_file: str | None = None, status_file: str | None = None):
+def start_web_server(host: str = "0.0.0.0", port: int = 8183, config_file: str | None = None, status_file: str | None = None):
     """Start uvicorn in a daemon thread. Returns thread."""
     try:
         import uvicorn
@@ -524,4 +524,4 @@ if __name__ == "__main__":
     import uvicorn
 
     _app = create_app()
-    uvicorn.run(_app, host="0.0.0.0", port=8080)
+    uvicorn.run(_app, host="0.0.0.0", port=8183)

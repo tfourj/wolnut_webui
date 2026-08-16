@@ -21,7 +21,7 @@ curl -O https://raw.githubusercontent.com/tfourj/wolnut_webui/main/docker-compos
 # edit ADMIN_USERNAME / ADMIN_PASSWORD / WOLNUT_JWT_SECRET in docker-compose.yml
 docker pull ghcr.io/tfourj/wolnut_webui:latest
 docker compose up -d
-# open http://<host>:8080 -> setup NUT + clients in WebUI
+# open http://<host>:8183 -> setup NUT + clients in WebUI
 ```
 
 WebUI is always on. No manual `config.yaml` needed.
