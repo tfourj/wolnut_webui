@@ -242,6 +242,8 @@ def wolnut(
     # Priority: --no-web > --web flag > WOLNUT_WEB_ENABLED env > default false (enabled via docker-compose)
     web_enabled = False
     env_flag = os.getenv("WOLNUT_WEB_ENABLED", "false").lower()
+    if env_flag in ("1", "true", "yes", "on"):
+        web_enabled = True
     if env_flag in ("0", "false", "no", "off"):
         web_enabled = False
     if web is True:
@@ -259,36 +261,92 @@ def wolnut(
         except Exception as e:
             logger.warning("Failed to start WebUI: %s", e)
 
+    # If an explicit config file was given (via --config-file or WOLNUT_CONFIG_FILE)
+    # but it doesn't exist yet, create a sensible default so the service doesn't crash-loop.
+    # The user can then edit it via the WebUI.
+    if config_file is not None and not os.path.exists(config_file):
+        if web_enabled:
+            logger.warning("Config file not found at '%s', creating default config...", config_file)
+            try:
+                _create_default_config(config_file, status_file)
+                logger.info("Default config created at '%s'. Edit it via WebUI at http://%s:%s", config_file, web_host, web_port)
+            except Exception as e:
+                logger.error("Failed to create default config at '%s': %s", config_file, e)
+        # if web is not enabled, let main() report the error normally
+
     if config_file is None:
         for path in DEFAULT_CONFIG_FILEPATHS:
             if os.path.exists(path):
                 config_file = path
                 break
-        # If web is enabled, don't abort on missing config — let user create it via UI
+        # If web is enabled, don't abort on missing config — create default and keep running
         if config_file is None:
             if web_enabled:
-                logger.warning(
-                    "No config file found. WebUI is running at http://%s:%s — create config there.",
-                    web_host,
-                    web_port,
-                )
-                # Keep web server alive even without monitor loop
+                # Use the primary default path
+                default_path = DEFAULT_CONFIG_FILEPATHS[0]
+                logger.warning("No config file found. Creating default at '%s' and running WebUI at http://%s:%s", default_path, web_host, web_port)
                 try:
-                    import time as _time
+                    _create_default_config(default_path, status_file)
+                    config_file = default_path
+                except Exception as e:
+                    logger.error("Failed to create default config: %s", e)
+                    # Still keep web alive so user can fix via UI
+                    try:
+                        import time as _time
 
-                    while True:
-                        _time.sleep(3600)
-                except KeyboardInterrupt:
-                    return 0
-            click.echo(
-                "No config file found. Checked default paths and WOLNUT_CONFIG_FILE env var."
-            )
-            raise click.Abort()
+                        while True:
+                            _time.sleep(3600)
+                    except KeyboardInterrupt:
+                        return 0
+            else:
+                click.echo(
+                    "No config file found. Checked default paths and WOLNUT_CONFIG_FILE env var."
+                )
+                raise click.Abort()
 
     exit_code = main(config_file, status_file, verbose)
     if exit_code != 0:
         # main() will log the specific error, so we just abort.
+        # If web is enabled, don't crash-loop — keep WebUI alive for repair
+        if web_enabled:
+            logger.warning("Wolnut monitor failed to start (exit %s). WebUI remains available at http://%s:%s for configuration.", exit_code, web_host, web_port)
+            try:
+                import time as _time
+
+                while True:
+                    _time.sleep(3600)
+            except KeyboardInterrupt:
+                return exit_code
         raise click.Abort()
+
+
+def _create_default_config(config_path: str, status_file: str | None = None) -> None:
+    """Create a minimal default config.yaml so the service can start and be configured via WebUI."""
+    import yaml
+    from pathlib import Path
+    from wolnut.state import DEFAULT_STATE_FILEPATH
+
+    p = Path(config_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    if p.exists():
+        return
+    status_path = status_file or os.getenv("WOLNUT_STATUS_FILE") or DEFAULT_STATE_FILEPATH
+    default_cfg = {
+        "log_level": "INFO",
+        "nut": {"ups": "ups@localhost"},
+        "poll_interval": 15,
+        "status_file": status_path,
+        "wake_on": {
+            "restore_delay_sec": 30,
+            "min_battery_percent": 25,
+            "client_timeout_sec": 600,
+            "reattempt_delay": 30,
+        },
+        "clients": [],
+    }
+    with open(p, "w") as f:
+        yaml.safe_dump(default_cfg, f, sort_keys=False)
+    logger.info("Wrote default config to %s", p)
 
 
 @click.command(name="web")
