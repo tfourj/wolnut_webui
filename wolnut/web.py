@@ -21,7 +21,7 @@ except ImportError as e:
     FastAPI = None  # type: ignore
 
 from wolnut.config import DEFAULT_CONFIG_FILEPATHS, validate_config
-from wolnut.monitor import get_ups_status, is_client_online
+from wolnut.monitor import get_ups_status, get_ups_status_detailed, is_client_online
 from wolnut.state import DEFAULT_STATE_FILEPATH
 from wolnut.utils import resolve_mac_from_host, validate_mac_format
 from wolnut.wol import send_wol_packet
@@ -195,7 +195,10 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         ups_name = raw_cfg.get("nut", {}).get("ups", "ups@localhost")
         ups_username = raw_cfg.get("nut", {}).get("username")
         ups_password = raw_cfg.get("nut", {}).get("password")
-        ups = get_ups_status(ups_name, username=ups_username, password=ups_password)
+        ups, ups_error = get_ups_status_detailed(ups_name, username=ups_username, password=ups_password)
+        import shutil as _shutil
+
+        upsc_available = _shutil.which("upsc") is not None
 
         # state file
         state = {}
@@ -222,6 +225,8 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
 
         return {
             "ups": ups,
+            "ups_error": ups_error,
+            "upsc_available": upsc_available,
             "state": state,
             "clients": clients_status,
             "config_path": cfg_path,
@@ -234,8 +239,14 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         ups_name = raw_cfg.get("nut", {}).get("ups", "ups@localhost")
         ups_username = raw_cfg.get("nut", {}).get("username")
         ups_password = raw_cfg.get("nut", {}).get("password")
-        data = get_ups_status(ups_name, username=ups_username, password=ups_password)
-        return data
+        ups, ups_error = get_ups_status_detailed(ups_name, username=ups_username, password=ups_password)
+        import shutil as _shutil
+
+        return {
+            "ups": ups,
+            "ups_error": ups_error,
+            "upsc_available": _shutil.which("upsc") is not None,
+        }
 
     @app.post("/api/wol")
     def post_wol(req: WolRequest):
