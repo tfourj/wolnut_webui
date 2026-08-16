@@ -1,15 +1,10 @@
 services:
     wolnut:
+        image: ghcr.io/tfourj/wolnut_webui:latest
         build: .
-        # image: hardwarehaven/wolnut:latest
         container_name: wolnut
         network_mode: host
         restart: unless-stopped
-        # WebUI is available at http://<host>:8183
-        # network_mode host already exposes 8183; the ports mapping below is for
-        # bridge mode (if you remove network_mode host, uncomment ports)
-        #ports:
-        #    - "8183:8183"
         volumes:
             - ./config:/config
         environment:

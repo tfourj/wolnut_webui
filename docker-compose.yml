@@ -1,5 +1,6 @@
 services:
     wolnut:
+        image: ghcr.io/tfourj/wolnut_webui:latest
         build: .
         container_name: wolnut
         network_mode: host
