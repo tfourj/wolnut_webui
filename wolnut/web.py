@@ -291,13 +291,31 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             validate_config(raw)
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
+        # Try to resolve MAC for clients with "auto" and collect warnings
+        warnings: list[dict] = []
+        for c in raw.get("clients", []):
+            if c.get("mac") == "auto":
+                host = c.get("host")
+                name = c.get("name", "?")
+                try:
+                    resolved = resolve_mac_from_host(host)
+                    if resolved:
+                        logger.info("Resolved MAC for %s (%s) -> %s", name, host, resolved)
+                    else:
+                        msg = f"Could not resolve MAC for {name} ({host})"
+                        logger.warning(msg)
+                        warnings.append({"client": name, "host": host, "message": msg, "field": "mac"})
+                except Exception as e:
+                    msg = f"Could not resolve MAC for {name} ({host}): {e}"
+                    logger.warning(msg)
+                    warnings.append({"client": name, "host": host, "message": msg, "field": "mac"})
         # save
         try:
             save_raw_config(cfg_path, raw)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to write config: {e}")
         logger.info("Config saved via WebUI to %s", cfg_path)
-        return {"status": "saved", "path": cfg_path, "config": raw}
+        return {"status": "saved", "path": cfg_path, "config": raw, "warnings": warnings}
 
     @app.get("/api/status")
     def get_status(user: str = Depends(require_auth)):
