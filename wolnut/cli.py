@@ -196,7 +196,39 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
     help="The status filepath to load. Can also be set with WOLNUT_STATUS_FILE env var.",
 )
 @click.option("--verbose", is_flag=True, help="Enable verbose logging")
-def wolnut(config_file: str | None, status_file: str | None, verbose: bool) -> int:
+@click.option(
+    "--web",
+    is_flag=True,
+    default=None,
+    help="Enable WebUI (overrides WOLNUT_WEB_ENABLED env var)",
+)
+@click.option(
+    "--web-host",
+    envvar="WOLNUT_WEB_HOST",
+    default="0.0.0.0",
+    help="WebUI host",
+)
+@click.option(
+    "--web-port",
+    envvar="WOLNUT_WEB_PORT",
+    default=8080,
+    type=int,
+    help="WebUI port",
+)
+@click.option(
+    "--no-web",
+    is_flag=True,
+    help="Disable WebUI even if enabled via env",
+)
+def wolnut(
+    config_file: str | None,
+    status_file: str | None,
+    verbose: bool,
+    web: bool | None,
+    web_host: str,
+    web_port: int,
+    no_web: bool,
+) -> int:
     """A service to send Wake-on-LAN packets to clients after a power outage."""
     logging.basicConfig(
         level=logging.INFO,
@@ -206,12 +238,48 @@ def wolnut(config_file: str | None, status_file: str | None, verbose: bool) -> i
     if verbose:
         configure_logger("DEBUG")
 
+    # Decide whether to enable webui
+    # Priority: --no-web > --web flag > WOLNUT_WEB_ENABLED env > default false (enabled via docker-compose)
+    web_enabled = False
+    env_flag = os.getenv("WOLNUT_WEB_ENABLED", "false").lower()
+    if env_flag in ("0", "false", "no", "off"):
+        web_enabled = False
+    if web is True:
+        web_enabled = True
+    if no_web:
+        web_enabled = False
+
+    if web_enabled:
+        try:
+            from wolnut.web import start_web_server
+
+            start_web_server(
+                host=web_host, port=web_port, config_file=config_file, status_file=status_file
+            )
+        except Exception as e:
+            logger.warning("Failed to start WebUI: %s", e)
+
     if config_file is None:
         for path in DEFAULT_CONFIG_FILEPATHS:
             if os.path.exists(path):
                 config_file = path
                 break
+        # If web is enabled, don't abort on missing config — let user create it via UI
         if config_file is None:
+            if web_enabled:
+                logger.warning(
+                    "No config file found. WebUI is running at http://%s:%s — create config there.",
+                    web_host,
+                    web_port,
+                )
+                # Keep web server alive even without monitor loop
+                try:
+                    import time as _time
+
+                    while True:
+                        _time.sleep(3600)
+                except KeyboardInterrupt:
+                    return 0
             click.echo(
                 "No config file found. Checked default paths and WOLNUT_CONFIG_FILE env var."
             )
@@ -221,3 +289,32 @@ def wolnut(config_file: str | None, status_file: str | None, verbose: bool) -> i
     if exit_code != 0:
         # main() will log the specific error, so we just abort.
         raise click.Abort()
+
+
+@click.command(name="web")
+@click.option(
+    "--config-file",
+    envvar="WOLNUT_CONFIG_FILE",
+    help="The configuration filepath to load.",
+)
+@click.option(
+    "--status-file",
+    envvar="WOLNUT_STATUS_FILE",
+    help="The status filepath to load.",
+)
+@click.option("--host", envvar="WOLNUT_WEB_HOST", default="0.0.0.0", help="Host to bind")
+@click.option("--port", envvar="WOLNUT_WEB_PORT", default=8080, type=int, help="Port to bind")
+def web_only(config_file: str | None, status_file: str | None, host: str, port: int):
+    """Run only the WebUI (no monitoring loop). Useful for config editing."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+    )
+    try:
+        import uvicorn
+        from wolnut.web import create_app
+    except ImportError:
+        click.echo("FastAPI/uvicorn not installed")
+        raise click.Abort()
+    app = create_app(config_file=config_file, status_file=status_file)
+    uvicorn.run(app, host=host, port=port)
