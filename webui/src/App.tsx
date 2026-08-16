@@ -426,10 +426,18 @@ function Dashboard({ cfg, status, showToast }: { cfg: WolnutConfig | null; statu
         ) : (
           <div>
             {status.clients.map((c: any) => (
-              <div key={c.name} className="client-row">
+              <div key={c.name} className="client-row" style={{ opacity: c.enabled === false ? 0.6 : 1 }}>
                 <div className="client-main">
                   <strong>{c.name}</strong>
                   <span>{c.host} · {c.mac}</span>
+                  <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                    {c.enabled === false && (
+                      <span style={{ background: '#2a2e3a', color: '#9aa0ae', padding: '2px 8px', borderRadius: 999, fontSize: 11 }}>Disabled</span>
+                    )}
+                    {c.always_wake && (
+                      <span style={{ background: '#2a2015', border: '1px solid #f1c40f', color: '#f1c40f', padding: '2px 8px', borderRadius: 999, fontSize: 11 }}>⚠ Always</span>
+                    )}
+                  </div>
                 </div>
                 <span className={`badge ${c.online ? 'online' : 'offline'}`}>
                   <span className="badge-dot" style={{ background: c.online ? '#2ecc71' : '#e74c3c' }} />
@@ -613,7 +621,10 @@ function ClientsTab({
   const addClient = () => {
     setCfg({
       ...cfg,
-      clients: [...cfg.clients, { name: `client ${cfg.clients.length + 1}`, host: '192.168.0.100', mac: 'auto' }],
+      clients: [
+        ...cfg.clients,
+        { name: `client ${cfg.clients.length + 1}`, host: '192.168.0.100', mac: 'auto', always_wake: false, enabled: true },
+      ],
     })
   }
 
@@ -645,8 +656,13 @@ function ClientsTab({
       {cfg.clients.map((c, idx) => {
         const online = liveMap.get(c.name)
         const w = warningMap.get(c.name)
+        const isDisabled = c.enabled === false
         return (
-          <div key={idx} className="card" style={{ background: '#0f1115', padding: 16, borderColor: w ? '#f1c40f' : undefined }}>
+          <div
+            key={idx}
+            className="card"
+            style={{ background: '#0f1115', padding: 16, borderColor: w ? '#f1c40f' : undefined, opacity: isDisabled ? 0.6 : 1 }}
+          >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
               <strong>#{idx + 1} — {c.name || 'Unnamed'}</strong>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -741,6 +757,37 @@ function ClientsTab({
                   </button>
                 </div>
               </div>
+            </div>
+            <div style={{ display: 'flex', gap: 16, marginTop: 12, flexWrap: 'wrap', alignItems: 'center', borderTop: '1px solid #2a2e3a', paddingTop: 12 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={!!c.always_wake}
+                  onChange={e => updateClient(idx, { always_wake: e.target.checked })}
+                  style={{ width: 16, height: 16 }}
+                />
+                <span style={{ color: c.always_wake ? '#f1c40f' : '#e6e8ec' }}>Always wake</span>
+                <span style={{ color: '#9aa0ae', fontSize: 12 }}>(even if offline before outage)</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={c.enabled ?? true}
+                  onChange={e => updateClient(idx, { enabled: e.target.checked })}
+                  style={{ width: 16, height: 16 }}
+                />
+                <span style={{ color: c.enabled === false ? '#9aa0ae' : '#e6e8ec' }}>Enabled</span>
+              </label>
+              {c.always_wake && (
+                <span style={{ background: '#2a2015', border: '1px solid #f1c40f', color: '#f1c40f', padding: '2px 8px', borderRadius: 999, fontSize: 11 }}>
+                  ⚠ Always
+                </span>
+              )}
+              {c.enabled === false && (
+                <span style={{ background: '#2a2e3a', color: '#9aa0ae', padding: '2px 8px', borderRadius: 999, fontSize: 11 }}>
+                  Disabled
+                </span>
+              )}
             </div>
           </div>
         )

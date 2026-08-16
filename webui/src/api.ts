@@ -17,6 +17,8 @@ export interface ClientConfig {
   name: string
   host: string
   mac: string
+  always_wake?: boolean
+  enabled?: boolean
 }
 
 export interface WebUIConfig {

@@ -22,6 +22,10 @@ clients:
   - name: "client 1"                  # Human-readable name
     host: 192.168.0.100               # IP address preferred for reliability
     mac: 38:f7:cd:c5:87:6b
+    always_wake: false               # Default: only wake if online before outage; true = always wake even if asleep/offline
+    enabled: true                    # Set false to temporarily disable without deleting
   - name: "client 2"
     host: hostname.local             # You can use a hostname if it resolves to a reachable interface
     mac: auto                        # MAC will be resolved using ARP at runtime
+    always_wake: true                # Example: always wake this host after power restore
+    enabled: true
