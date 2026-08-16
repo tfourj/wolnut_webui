@@ -185,10 +185,10 @@ function Dashboard({ cfg, status, showToast }: { cfg: WolnutConfig | null; statu
                 color: '#9aa0ae',
               }}
             >
-              {upsError || "upsc binary missing — install nut-client (apt install nut-client) or rebuild the Docker image."}
+              {upsError || "upsc binary missing — install nut-client (apt install nut-client)."}
             </pre>
             <span style={{ color: '#9aa0ae', fontSize: 12 }}>
-              The container image should include <code>nut-client</code>. If you see this in Docker, rebuild with the latest <code>Dockerfile</code>.
+              <code>nut-client</code> needs to be installed to query UPS status.
             </span>
           </div>
         )}
