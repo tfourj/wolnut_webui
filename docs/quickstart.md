@@ -1,11 +1,18 @@
-# Quickstart
+# Quickstart Guide
 
-WebUI is always running — all configuration is done there. No manual `config.yaml` editing needed.
+This guide will help you get `wolnut` running in a few simple steps using Docker.
+
+## Prerequisites
+
+- Docker installed and running.
+- A NUT (Network UPS Tools) server monitoring your UPS. See [Techno Tim's](https://technotim.live/posts/NUT-server-guide/) guide
+- The IP address or hostname of your NUT server, probably localhost.
+- The name of the UPS as configured in NUT (e.g., `ups`).
 
 ## 1. Make dir
 
 ```bash
-mkdir -p ~/wolnut/config && cd ~/wolnut
+mkdir wolnut && cd wolnut
 ```
 
 ## 2. Download compose
@@ -18,7 +25,7 @@ curl -O https://raw.githubusercontent.com/tfourj/wolnut_webui/main/docker-compos
 wget https://raw.githubusercontent.com/tfourj/wolnut_webui/main/docker-compose.yml
 ```
 
-Or manually download `docker-compose.yml` from the repo and place it in `~/wolnut/`.
+Or manually download `docker-compose.yml` from the repo and place it in `wolnut`.
 
 ## 3. Change .envs
 
@@ -36,11 +43,10 @@ Change to secure values. `ADMIN_USERNAME`/`ADMIN_PASSWORD` are the WebUI login.
 ## 4. Run compose
 
 ```bash
-docker pull ghcr.io/tfourj/wolnut_webui:latest
 docker compose up -d
 ```
 
-Requires `network_mode: host` for Wake-on-LAN — do not add `ports`.
+Requires `network_mode: host` for Wake-on-LAN — do not add `ports`. WebUI is always running on port 8183.
 
 ## 5. Setup in WebUI
 

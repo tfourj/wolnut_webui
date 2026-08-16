@@ -1,6 +1,6 @@
 services:
     wolnut:
-        image: ghcr.io/tfourj/wolnut_webui:latest
+        #image: ghcr.io/tfourj/wolnut_webui:latest
         build: .
         container_name: wolnut
         network_mode: host
@@ -8,7 +8,7 @@ services:
         volumes:
             - ./config:/config
         environment:
-            - WOLNUT_WEB_PORT=8183
+            #- WOLNUT_WEB_PORT=8123
             - ADMIN_USERNAME=admin
             - ADMIN_PASSWORD=changeme
             - WOLNUT_JWT_SECRET=change-this-to-a-long-random-secret
