@@ -1,0 +1,20 @@
+services:
+    wolnut:
+        build: .
+        # image: hardwarehaven/wolnut:latest
+        container_name: wolnut
+        network_mode: host
+        restart: unless-stopped
+        # WebUI is available at http://<host>:8183
+        # network_mode host already exposes 8183; the ports mapping below is for
+        # bridge mode (if you remove network_mode host, uncomment ports)
+        #ports:
+        #    - "8183:8183"
+        volumes:
+            - ./config:/config
+        environment:
+            - WOLNUT_WEB_ENABLED=true
+            - WOLNUT_WEB_HOST=0.0.0.0
+            - WOLNUT_WEB_PORT=8183
+            - WOLNUT_CONFIG_FILE=/config/config.yaml
+            - WOLNUT_STATUS_FILE=/config/wolnut_state.json
