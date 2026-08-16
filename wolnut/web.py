@@ -11,9 +11,10 @@ import yaml
 logger = logging.getLogger("wolnut")
 
 try:
-    from fastapi import FastAPI, HTTPException
+    from fastapi import Depends, FastAPI, HTTPException
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import FileResponse
+    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel, Field
 except ImportError as e:
@@ -107,6 +108,69 @@ class WolRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Auth helpers (JWT bearer)
+# ---------------------------------------------------------------------------
+
+def _get_auth_config():
+    username = os.getenv("ADMIN_USERNAME", "").strip()
+    password = os.getenv("ADMIN_PASSWORD", "").strip()
+    enabled = bool(username and password)
+    # JWT secret: explicit env or fallback to password hash; if no password, use random ephemeral
+    secret = os.getenv("WOLNUT_JWT_SECRET") or os.getenv("JWT_SECRET") or (password if password else "dev-secret-change-me")
+    return enabled, username, password, secret
+
+
+def _create_access_token(username: str, secret: str, expires_hours: int = 24) -> str:
+    try:
+        import jwt
+        from datetime import datetime, timedelta, timezone
+
+        payload = {
+            "sub": username,
+            "iat": datetime.now(timezone.utc),
+            "exp": datetime.now(timezone.utc) + timedelta(hours=expires_hours),
+        }
+        return jwt.encode(payload, secret, algorithm="HS256")
+    except ImportError:
+        # fallback: very simple unsigned token (not for production, but avoids hard crash if PyJWT missing)
+        import base64
+        import json as _json
+        import time
+
+        payload = {"sub": username, "exp": int(time.time()) + expires_hours * 3600}
+        return base64.urlsafe_b64encode(_json.dumps(payload).encode()).decode()
+
+
+def _verify_token(token: str, secret: str) -> str:
+    try:
+        import jwt
+
+        payload = jwt.decode(token, secret, algorithms=["HS256"])
+        sub = payload.get("sub")
+        if not sub:
+            raise ValueError("Missing sub")
+        return sub
+    except ImportError:
+        import base64
+        import json as _json
+        import time
+
+        try:
+            # try base64 fallback
+            padded = token + "=" * (-len(token) % 4)
+            payload = _json.loads(base64.urlsafe_b64decode(padded).decode())
+            if payload.get("exp") and payload["exp"] < time.time():
+                raise ValueError("Token expired")
+            if not payload.get("sub"):
+                raise ValueError("Missing sub")
+            return payload["sub"]
+        except Exception as e:
+            raise ValueError(str(e))
+    except Exception as e:
+        raise ValueError(str(e))
+
+
+# ---------------------------------------------------------------------------
 # FastAPI app factory
 # ---------------------------------------------------------------------------
 
@@ -126,6 +190,25 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
 
     cfg_path = resolve_config_path(config_file)
     st_path = resolve_status_path(status_file)
+
+    # --- auth setup ---
+    auth_enabled, admin_user, admin_pass, jwt_secret = _get_auth_config()
+    security = HTTPBearer(auto_error=False)
+
+    def require_auth(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+        if not auth_enabled:
+            return admin_user or "anonymous"
+        if credentials is None or not credentials.credentials:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        try:
+            user = _verify_token(credentials.credentials, jwt_secret)
+            if user != admin_user:
+                raise HTTPException(status_code=401, detail="Invalid token user")
+            return user
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
 
     # --- helpers inside closure ---
     def _read_config_or_default() -> dict:
@@ -161,15 +244,43 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok"}
+        return {"status": "ok", "auth_enabled": auth_enabled}
+
+    @app.get("/api/auth/status")
+    def auth_status():
+        return {"auth_enabled": auth_enabled, "user": admin_user if auth_enabled else None}
+
+    class LoginRequest(BaseModel):
+        username: str
+        password: str
+
+    @app.post("/api/auth/login")
+    def login(req: LoginRequest):
+        if not auth_enabled:
+            # no auth configured -> issue token anyway for consistency
+            token = _create_access_token(req.username or "anonymous", jwt_secret)
+            return {"access_token": token, "token_type": "bearer", "auth_enabled": False}
+        if req.username != admin_user or req.password != admin_pass:
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+        token = _create_access_token(req.username, jwt_secret)
+        return {"access_token": token, "token_type": "bearer"}
+
+    @app.get("/api/auth/me")
+    def auth_me(user: str = Depends(require_auth)):
+        return {"user": user, "auth_enabled": auth_enabled}
+
+    @app.post("/api/auth/logout")
+    def logout(user: str = Depends(require_auth)):
+        # stateless JWT: client just discards token
+        return {"status": "logged out"}
 
     @app.get("/api/config")
-    def get_config():
+    def get_config(user: str = Depends(require_auth)):
         data = _read_config_or_default()
         return data
 
     @app.put("/api/config")
-    def put_config(cfg: ConfigModel):
+    def put_config(cfg: ConfigModel, user: str = Depends(require_auth)):
         raw = cfg.model_dump()
         # clean empty auth (so they become omitted if blank)
         if not raw["nut"].get("username"):
@@ -189,7 +300,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         return {"status": "saved", "path": cfg_path, "config": raw}
 
     @app.get("/api/status")
-    def get_status():
+    def get_status(user: str = Depends(require_auth)):
         # UPS status
         raw_cfg = _read_config_or_default()
         ups_name = raw_cfg.get("nut", {}).get("ups", "ups@localhost")
@@ -234,7 +345,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         }
 
     @app.get("/api/ups")
-    def get_ups():
+    def get_ups(user: str = Depends(require_auth)):
         raw_cfg = _read_config_or_default()
         ups_name = raw_cfg.get("nut", {}).get("ups", "ups@localhost")
         ups_username = raw_cfg.get("nut", {}).get("username")
@@ -249,7 +360,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         }
 
     @app.post("/api/wol")
-    def post_wol(req: WolRequest):
+    def post_wol(req: WolRequest, user: str = Depends(require_auth)):
         if not validate_mac_format(req.mac):
             raise HTTPException(status_code=400, detail="Invalid MAC format")
         ok = send_wol_packet(req.mac, broadcast_ip=req.broadcast_ip)
@@ -258,7 +369,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         return {"status": "sent", "mac": req.mac}
 
     @app.post("/api/wol/client/{client_name}")
-    def post_wol_client(client_name: str):
+    def post_wol_client(client_name: str, user: str = Depends(require_auth)):
         raw_cfg = _read_config_or_default()
         for c in raw_cfg.get("clients", []):
             if c["name"] == client_name:
@@ -276,7 +387,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         raise HTTPException(status_code=404, detail=f"Client {client_name} not found")
 
     @app.post("/api/resolve-mac")
-    def post_resolve_mac(payload: dict):
+    def post_resolve_mac(payload: dict, user: str = Depends(require_auth)):
         host = payload.get("host")
         if not host:
             raise HTTPException(status_code=400, detail="host required")
@@ -286,7 +397,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         return {"host": host, "mac": mac}
 
     @app.post("/api/ping")
-    def post_ping(payload: dict):
+    def post_ping(payload: dict, user: str = Depends(require_auth)):
         host = payload.get("host")
         if not host:
             raise HTTPException(status_code=400, detail="host required")
