@@ -15,6 +15,7 @@ const DEFAULT_CFG: WolnutConfig = {
 export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard')
   const [cfg, setCfg] = useState<WolnutConfig | null>(null)
+  const [originalCfg, setOriginalCfg] = useState<WolnutConfig | null>(null)
   const [status, setStatus] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -26,12 +27,15 @@ export default function App() {
     setTimeout(() => setToast(null), 3000)
   }
 
+  const isDirty = !!cfg && !!originalCfg && JSON.stringify(cfg) !== JSON.stringify(originalCfg)
+
   const load = async () => {
     setLoading(true)
     setErr(null)
     try {
       const c = await fetchConfig()
       setCfg(c)
+      setOriginalCfg(JSON.parse(JSON.stringify(c)))
     } catch (e: any) {
       setErr(String(e.message || e))
     } finally {
@@ -62,6 +66,7 @@ export default function App() {
     setErr(null)
     try {
       await saveConfig(cfg)
+      setOriginalCfg(JSON.parse(JSON.stringify(cfg)))
       showToast('Configuration saved — restart container to apply')
     } catch (e: any) {
       setErr(String(e.message || e))
@@ -85,11 +90,13 @@ export default function App() {
           🥜 Wolnut
           <span>UPS Wake-on-LAN</span>
         </h1>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="header-actions">
           <button className="btn btn-ghost" onClick={load}>Refresh</button>
-          <button className="btn btn-primary" onClick={onSave} disabled={saving}>
-            {saving ? 'Saving...' : 'Save config'}
-          </button>
+          {isDirty && (
+            <button className="btn btn-primary" onClick={onSave} disabled={saving}>
+              {saving ? 'Saving...' : 'Save config'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -123,11 +130,14 @@ export default function App() {
 
 function Dashboard({ cfg, status, showToast }: { cfg: WolnutConfig | null; status: any; showToast: (m: string) => void }) {
   const ups = status?.ups || {}
+  const upsError: string | null = status?.ups_error || null
+  const upscAvailable: boolean | null = status?.upsc_available ?? null
   const state = status?.state || {}
   const battery = ups['battery.charge'] ?? '—'
   const power = ups['ups.status'] ?? 'Unknown'
   const isOnline = String(power).includes('OL')
   const isOnBattery = String(power).includes('OB')
+  const isUpscMissing = upscAvailable === false || (upsError && upsError.includes("'upsc'"))
 
   return (
     <div className="status-grid">
@@ -145,8 +155,62 @@ function Dashboard({ cfg, status, showToast }: { cfg: WolnutConfig | null; statu
           <span className="badge">🔋 {battery}%</span>
         </div>
 
+        {isUpscMissing && (
+          <div
+            style={{
+              background: '#2a1515',
+              border: '1px solid #4d1f1f',
+              borderRadius: 8,
+              padding: '12px 14px',
+              marginBottom: 12,
+              fontSize: 13,
+              lineHeight: 1.5,
+            }}
+          >
+            <strong style={{ color: '#ff6b6b', display: 'block', marginBottom: 4 }}>
+              ⚠ upsc not found
+            </strong>
+            <span style={{ color: '#e6e8ec' }}>
+              Failed to get UPS status: [Errno 2] No such file or directory: 'upsc' is not installed.
+            </span>
+            <pre
+              style={{
+                background: '#0f1115',
+                border: '1px solid #2a2e3a',
+                borderRadius: 6,
+                padding: 8,
+                fontSize: 11,
+                marginTop: 8,
+                whiteSpace: 'pre-wrap',
+                color: '#9aa0ae',
+              }}
+            >
+              {upsError || "upsc binary missing — install nut-client (apt install nut-client) or rebuild the Docker image."}
+            </pre>
+            <span style={{ color: '#9aa0ae', fontSize: 12 }}>
+              The container image should include <code>nut-client</code>. If you see this in Docker, rebuild with the latest <code>Dockerfile</code>.
+            </span>
+          </div>
+        )}
+
+        {!isUpscMissing && upsError && (
+          <div
+            style={{
+              background: '#2a2015',
+              border: '1px solid #4d3a1f',
+              borderRadius: 8,
+              padding: '12px 14px',
+              marginBottom: 12,
+              fontSize: 13,
+            }}
+          >
+            <strong style={{ color: '#f1c40f', display: 'block', marginBottom: 4 }}>UPS error</strong>
+            <span style={{ color: '#e6e8ec' }}>{upsError}</span>
+          </div>
+        )}
+
         {Object.keys(ups).length === 0 ? (
-          <p className="inline-help">No UPS data — check NUT connection / ups name.</p>
+          !isUpscMissing && !upsError ? <p className="inline-help">No UPS data — check NUT connection / ups name.</p> : null
         ) : (
           <div>
             <div className="kv"><span>UPS name</span><span>{cfg?.nut.ups}</span></div>
@@ -173,6 +237,22 @@ function Dashboard({ cfg, status, showToast }: { cfg: WolnutConfig | null; statu
           >
             {JSON.stringify(ups, null, 2)}
           </pre>
+          {upsError && (
+            <pre
+              style={{
+                background: '#1a1212',
+                border: '1px solid #4d1f1f',
+                borderRadius: 8,
+                padding: 12,
+                fontSize: 11,
+                overflowX: 'auto',
+                marginTop: 8,
+                color: '#ff9999',
+              }}
+            >
+              Error: {upsError}
+            </pre>
+          )}
         </details>
       </div>
 

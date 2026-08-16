@@ -56,6 +56,12 @@ a:hover { text-decoration: underline; }
   color: var(--muted);
 }
 
+.header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .tabs {
   display: flex;
   gap: 8px;
@@ -143,6 +149,12 @@ a:hover { text-decoration: underline; }
   font-weight: 600;
   cursor: pointer;
   font-size: 14px;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  white-space: nowrap;
 }
 .btn-primary {
   background: var(--accent);
