@@ -36,6 +36,8 @@ class ClientConfig:
     name: str
     host: str
     mac: str  # "auto" supported
+    always_wake: bool = False  # if True, wake even if offline before power loss (default: only if was online)
+    enabled: bool = True  # if False, client is ignored (no ping, no WOL) - useful to temporarily disable
 
 
 @dataclass
@@ -105,6 +107,7 @@ def load_config(
     final_status_path = find_state_file(final_status_path)
 
     clients = []
+    allowed_client_fields = set(ClientConfig.__dataclass_fields__.keys())
     for raw_client in raw["clients"]:
         try:
             mac = raw_client["mac"]
@@ -122,7 +125,9 @@ def load_config(
                 raw_client["mac"] = resolved_mac
                 logger.info("MAC for %s: %s", raw_client["name"], resolved_mac)
 
-            clients.append(ClientConfig(**raw_client))
+            # Filter to known fields so unknown keys don't crash, but keep defaults for new optional fields
+            filtered = {k: v for k, v in raw_client.items() if k in allowed_client_fields}
+            clients.append(ClientConfig(**filtered))
         except ValueError as e:
             logger.error("Failed to load client %s: %s", raw_client.get("name", "?"), e)
 
@@ -173,3 +178,7 @@ def validate_config(raw: dict):
             raise ValueError(
                 f"Client '{client['name']}' has invalid MAC address format: {mac}"
             )
+        if "always_wake" in client and not isinstance(client["always_wake"], bool):
+            raise ValueError(f"Client '{client['name']}' has invalid 'always_wake' (must be boolean)")
+        if "enabled" in client and not isinstance(client["enabled"], bool):
+            raise ValueError(f"Client '{client['name']}' has invalid 'enabled' (must be boolean)")

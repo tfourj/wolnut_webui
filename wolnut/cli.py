@@ -83,9 +83,10 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
                     config = new_config
                     # Sync state tracker with new client list
                     state_tracker.sync_clients(config.clients)
-                    # Reset recorded sets for removed/added clients
-                    recorded_down_clients.intersection_update({c.name for c in config.clients})
-                    recorded_up_clients.intersection_update({c.name for c in config.clients})
+                    # Reset recorded sets for removed/added clients (only enabled)
+                    enabled_names = {c.name for c in config.clients if getattr(c, "enabled", True)}
+                    recorded_down_clients.intersection_update(enabled_names)
+                    recorded_up_clients.intersection_update(enabled_names)
                     logger.info("Config reloaded: %s clients, poll_interval=%s", len(config.clients), config.poll_interval)
                 else:
                     logger.warning("Failed to reload config, keeping previous config")
@@ -103,6 +104,8 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
 
         # Check each client
         for client in config.clients:
+            if not getattr(client, "enabled", True):
+                continue
             online = is_client_online(client.host)
             state_tracker.update(client.name, online)
 
@@ -149,11 +152,13 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
                     wol_being_sent = True
 
                 for client in config.clients:
+                    if not getattr(client, "enabled", True):
+                        continue
 
                     if state_tracker.should_skip(client.name):
                         continue
 
-                    if not state_tracker.was_online_before_shutdown(client.name):
+                    if not getattr(client, "always_wake", False) and not state_tracker.was_online_before_shutdown(client.name):
                         logger.info(
                             "Skipping WOL for %s: was not online before power loss",
                             client.name,

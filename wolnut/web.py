@@ -91,6 +91,8 @@ class ClientModel(BaseModel):
     name: str
     host: str
     mac: str
+    always_wake: bool = False
+    enabled: bool = True
 
 
 class WebUIConfigModel(BaseModel):
@@ -251,6 +253,9 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         if "suppress_mac_warnings" in raw and "suppress_mac_warnings" not in raw["webui"]:
             raw["webui"]["suppress_mac_warnings"] = raw.pop("suppress_mac_warnings")
         raw["webui"].setdefault("suppress_mac_warnings", False)
+        for c in raw.get("clients", []) or []:
+            c.setdefault("always_wake", False)
+            c.setdefault("enabled", True)
         return raw
 
     @app.get("/api/health")
@@ -307,6 +312,8 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         suppress_warnings = raw.get("webui", {}).get("suppress_mac_warnings", False) or raw.get("suppress_mac_warnings", False)
         if not suppress_warnings:
             for c in raw.get("clients", []):
+                if c.get("enabled", True) is False:
+                    continue
                 if c.get("mac") == "auto":
                     host = c.get("host")
                     name = c.get("name", "?")
@@ -355,13 +362,20 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         # client online checks
         clients_status = []
         for c in raw_cfg.get("clients", []):
-            online = is_client_online(c["host"])
+            # skip ping for disabled clients to avoid noise, but report as offline
+            enabled = c.get("enabled", True)
+            if enabled:
+                online = is_client_online(c["host"])
+            else:
+                online = False
             clients_status.append(
                 {
                     "name": c["name"],
                     "host": c["host"],
                     "mac": c["mac"],
                     "online": online,
+                    "always_wake": c.get("always_wake", False),
+                    "enabled": enabled,
                 }
             )
 
