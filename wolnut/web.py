@@ -344,7 +344,9 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         ups_name = raw_cfg.get("nut", {}).get("ups", "ups@localhost")
         ups_username = raw_cfg.get("nut", {}).get("username")
         ups_password = raw_cfg.get("nut", {}).get("password")
-        ups, ups_error = get_ups_status_detailed(ups_name, username=ups_username, password=ups_password)
+        ups_port = raw_cfg.get("nut", {}).get("port", 3493)
+        ups_timeout = raw_cfg.get("nut", {}).get("timeout", 5)
+        ups, ups_error = get_ups_status_detailed(ups_name, username=ups_username, password=ups_password, port=ups_port, timeout=ups_timeout)
         import shutil as _shutil
 
         upsc_available = _shutil.which("upsc") is not None
@@ -395,7 +397,9 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         ups_name = raw_cfg.get("nut", {}).get("ups", "ups@localhost")
         ups_username = raw_cfg.get("nut", {}).get("username")
         ups_password = raw_cfg.get("nut", {}).get("password")
-        ups, ups_error = get_ups_status_detailed(ups_name, username=ups_username, password=ups_password)
+        ups_port = raw_cfg.get("nut", {}).get("port", 3493)
+        ups_timeout = raw_cfg.get("nut", {}).get("timeout", 5)
+        ups, ups_error = get_ups_status_detailed(ups_name, username=ups_username, password=ups_password, port=ups_port, timeout=ups_timeout)
         import shutil as _shutil
 
         return {

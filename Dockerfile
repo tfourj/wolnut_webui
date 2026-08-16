@@ -61,6 +61,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 # Install system tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     iputils-ping \
     nut-client \
     net-tools \
