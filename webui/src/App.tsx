@@ -266,7 +266,7 @@ function Dashboard({ cfg, status, showToast }: { cfg: WolnutConfig | null; statu
   const power = ups['ups.status'] ?? 'Unknown'
   const isOnline = String(power).includes('OL')
   const isOnBattery = String(power).includes('OB')
-  const isUpscMissing = upscAvailable === false || (upsError && upsError.includes("'upsc'"))
+  const isUpscMissing = upscAvailable === false
 
   return (
     <div className="status-grid">
