@@ -19,6 +19,10 @@ export interface ClientConfig {
   mac: string
 }
 
+export interface WebUIConfig {
+  suppress_mac_warnings: boolean
+}
+
 export interface WolnutConfig {
   log_level: string
   poll_interval: number
@@ -26,6 +30,7 @@ export interface WolnutConfig {
   nut: NutConfig
   wake_on: WakeOnConfig
   clients: ClientConfig[]
+  webui: WebUIConfig
 }
 
 const TOKEN_KEY = 'wolnut_token'

@@ -10,6 +10,7 @@ const DEFAULT_CFG: WolnutConfig = {
   nut: { ups: 'ups@localhost', username: '', password: '' },
   wake_on: { restore_delay_sec: 30, min_battery_percent: 25, client_timeout_sec: 600, reattempt_delay: 30 },
   clients: [],
+  webui: { suppress_mac_warnings: false },
 }
 
 export default function App() {
@@ -70,6 +71,7 @@ export default function App() {
     setErr(null)
     try {
       const c = await fetchConfig()
+      if (!c.webui) c.webui = { suppress_mac_warnings: false }
       setCfg(c)
       setOriginalCfg(JSON.parse(JSON.stringify(c)))
     } catch (e: any) {
@@ -459,6 +461,7 @@ function ConfigForm({ cfg, setCfg }: { cfg: WolnutConfig; setCfg: (c: WolnutConf
   const set = (patch: Partial<WolnutConfig>) => setCfg({ ...cfg, ...patch })
   const setNut = (patch: Partial<WolnutConfig['nut']>) => setCfg({ ...cfg, nut: { ...cfg.nut, ...patch } })
   const setWake = (patch: Partial<WolnutConfig['wake_on']>) => setCfg({ ...cfg, wake_on: { ...cfg.wake_on, ...patch } })
+  const setWebUI = (patch: Partial<WolnutConfig['webui']>) => setCfg({ ...cfg, webui: { ...(cfg.webui || { suppress_mac_warnings: false }), ...patch } })
 
   return (
     <>
@@ -564,6 +567,24 @@ function ConfigForm({ cfg, setCfg }: { cfg: WolnutConfig; setCfg: (c: WolnutConf
           </div>
         </div>
       </div>
+
+      <div className="card">
+        <h2>WebUI Settings</h2>
+        <p className="desc">Frontend display preferences</p>
+        <div className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <input
+            type="checkbox"
+            checked={!!cfg.webui?.suppress_mac_warnings}
+            onChange={e => setWebUI({ suppress_mac_warnings: e.target.checked })}
+            style={{ width: 18, height: 18 }}
+            id="suppress_mac_warnings"
+          />
+          <label htmlFor="suppress_mac_warnings" style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 500, color: '#e6e8ec', fontSize: 14 }}>
+            Suppress MAC warnings
+          </label>
+        </div>
+        <span className="inline-help">Hide orange warnings when MAC "auto" cannot be resolved on save</span>
+      </div>
     </>
   )
 }
@@ -598,15 +619,17 @@ function ClientsTab({
 
   const liveMap = new Map<string, boolean>()
   for (const c of status?.clients || []) liveMap.set(c.name, c.online)
+  const isSuppressed = !!cfg.webui?.suppress_mac_warnings
+  const effectiveWarnings = isSuppressed ? [] : (warnings || [])
   const warningMap = new Map<string, any>()
-  for (const w of warnings || []) if (w.client) warningMap.set(w.client, w)
+  for (const w of effectiveWarnings || []) if (w.client) warningMap.set(w.client, w)
 
   return (
     <div className="card">
-      {warnings && warnings.length > 0 && (
+      {effectiveWarnings && effectiveWarnings.length > 0 && (
         <div style={{ background: '#2a2015', border: '1px solid #f1c40f', color: '#f1c40f', borderRadius: 8, padding: '10px 12px', marginBottom: 12, fontSize: 13 }}>
           <strong style={{ display: 'block', marginBottom: 4 }}>⚠ MAC resolution warning</strong>
-          <span style={{ color: '#e6e8ec' }}>{warnings.length} client(s) with MAC "auto" could not be resolved. They will be retried at runtime, but WOL may fail if the host is unreachable.</span>
+          <span style={{ color: '#e6e8ec' }}>{effectiveWarnings.length} client(s) with MAC "auto" could not be resolved. They will be retried at runtime, but WOL may fail if the host is unreachable.</span>
         </div>
       )}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
