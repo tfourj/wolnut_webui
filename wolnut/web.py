@@ -4,7 +4,7 @@ import os
 import subprocess
 import threading
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import yaml
 
@@ -21,8 +21,13 @@ except ImportError as e:
     # Allow import without fastapi for tests that don't need web
     FastAPI = None  # type: ignore
 
-from wolnut.config import DEFAULT_CONFIG_FILEPATHS, validate_config
+from wolnut.config import (
+    DEFAULT_CONFIG_FILEPATHS,
+    notifications_config_from_dict,
+    validate_config,
+)
 from wolnut.monitor import get_ups_status, get_ups_status_detailed, is_client_online
+from wolnut.notifications import NotificationService
 from wolnut.state import DEFAULT_STATE_FILEPATH
 from wolnut.utils import resolve_mac_from_host, validate_mac_format
 from wolnut.wol import send_wol_packet
@@ -141,6 +146,11 @@ class ConfigModel(BaseModel):
 class WolRequest(BaseModel):
     mac: str
     broadcast_ip: str = "255.255.255.255"
+
+
+class NotificationTestRequest(BaseModel):
+    provider: Literal["discord", "gotify"]
+    notifications: NotificationsConfigModel
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +334,10 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             c.setdefault("enabled", True)
         return raw
 
+    def _notifications_from_raw(raw: dict) -> NotificationService:
+        config = notifications_config_from_dict(raw.get("notifications"))
+        return NotificationService(config)
+
     @app.get("/api/health")
     def health():
         return {"status": "ok", "auth_enabled": auth_enabled}
@@ -476,30 +490,76 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
 
     @app.post("/api/wol")
     def post_wol(req: WolRequest, user: str = Depends(require_auth)):
+        notifications = _notifications_from_raw(_read_config_or_default())
         if not validate_mac_format(req.mac):
             raise HTTPException(status_code=400, detail="Invalid MAC format")
         ok = send_wol_packet(req.mac, broadcast_ip=req.broadcast_ip)
         if not ok:
+            notifications.send(
+                "errors",
+                "Wake-on-LAN failed",
+                f"Could not send a wake packet to {req.mac}.",
+            )
             raise HTTPException(status_code=500, detail="Failed to send WOL packet")
+        notifications.send(
+            "wake_sent",
+            "Wake-on-LAN packet sent",
+            f"Sent a wake packet to {req.mac}.",
+        )
         return {"status": "sent", "mac": req.mac}
 
     @app.post("/api/wol/client/{client_name}")
     def post_wol_client(client_name: str, user: str = Depends(require_auth)):
         raw_cfg = _read_config_or_default()
+        notifications = _notifications_from_raw(raw_cfg)
         for c in raw_cfg.get("clients", []):
             if c["name"] == client_name:
-                mac = c["host"] and c["mac"]
                 lookup_mac = c["mac"]
                 if lookup_mac == "auto":
                     resolved = resolve_mac_from_host(c["host"])
                     if not resolved:
-                        raise HTTPException(status_code=400, detail=f"Could not resolve MAC for {client_name}")
+                        notifications.send(
+                            "errors",
+                            "MAC resolution failed",
+                            (
+                                "Could not resolve a MAC address for "
+                                f"{client_name} ({c['host']})."
+                            ),
+                        )
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Could not resolve MAC for {client_name}",
+                        )
                     lookup_mac = resolved
                 ok = send_wol_packet(lookup_mac)
                 if not ok:
+                    notifications.send(
+                        "errors",
+                        "Wake-on-LAN failed",
+                        f"Could not send a wake packet to {client_name} ({lookup_mac}).",
+                    )
                     raise HTTPException(status_code=500, detail="Failed to send WOL packet")
+                notifications.send(
+                    "wake_sent",
+                    "Wake-on-LAN packet sent",
+                    f"Sent a wake packet to {client_name} ({lookup_mac}).",
+                )
                 return {"status": "sent", "client": client_name, "mac": lookup_mac}
         raise HTTPException(status_code=404, detail=f"Client {client_name} not found")
+
+    @app.post("/api/notifications/test")
+    def post_notification_test(
+        req: NotificationTestRequest,
+        user: str = Depends(require_auth),
+    ):
+        raw_notifications = req.notifications.model_dump()
+        notifications = NotificationService(
+            notifications_config_from_dict(raw_notifications)
+        )
+        result = notifications.send_test(req.provider)
+        if not result.success:
+            raise HTTPException(status_code=502, detail=result.error)
+        return {"status": "sent", "provider": result.provider}
 
     @app.post("/api/resolve-mac")
     def post_resolve_mac(payload: dict, user: str = Depends(require_auth)):

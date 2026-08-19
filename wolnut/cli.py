@@ -6,6 +6,7 @@ import time
 from wolnut.config import load_config, DEFAULT_CONFIG_FILEPATHS
 from wolnut.state import ClientStateTracker
 from wolnut.monitor import get_ups_status, is_client_online
+from wolnut.notifications import NotificationService
 from wolnut.wol import send_wol_packet
 
 logger = logging.getLogger("wolnut")
@@ -31,6 +32,7 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
 
     configure_logger(config.log_level)
     logger.info("WOLNUT started. Monitoring UPS: %s", config.nut.ups)
+    notifications = NotificationService(config.notifications)
 
     # Track config mtime for hot-reload (WebUI can edit without restart)
     from pathlib import Path as _Path
@@ -50,6 +52,7 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
     restoration_event = False
     restoration_event_start = None
     wol_being_sent = False
+    reported_wol_failures = set()
 
     state_tracker = ClientStateTracker(config.clients, status_file=config.status_file)
     if state_tracker.was_ups_on_battery():
@@ -81,6 +84,7 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
                             new_config.status_file,
                         )
                     config = new_config
+                    notifications = NotificationService(config.notifications)
                     # Sync state tracker with new client list
                     state_tracker.sync_clients(config.clients)
                     # Reset recorded sets for removed/added clients (only enabled)
@@ -115,6 +119,11 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
             state_tracker.set_ups_on_battery(True, battery_percent)
             on_battery = True
             logger.warning("UPS switched to battery power.")
+            notifications.send(
+                "power_loss",
+                "UPS switched to battery power",
+                f"Battery charge is {battery_percent}%.",
+            )
 
         # Power Restoration Event
         elif ("OL" in power_status and on_battery) or restoration_event:
@@ -123,6 +132,11 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
 
             if not restoration_event_start:
                 restoration_event_start = time.time()
+                notifications.send(
+                    "power_restored",
+                    "Power restored",
+                    f"UPS is back online with {battery_percent}% battery.",
+                )
 
             if battery_percent < config.wake_on.min_battery_percent:
                 logger.info(
@@ -169,6 +183,12 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
                     if state_tracker.is_online(client.name):
                         if client.name not in recorded_up_clients:
                             logger.info("%s is online.", client.name)
+                            if client.name in recorded_down_clients:
+                                notifications.send(
+                                    "client_recovered",
+                                    "Client is back online",
+                                    f"{client.name} ({client.host}) is reachable again.",
+                                )
                             recorded_down_clients.discard(client.name)
                             recorded_up_clients.update({client.name})
                         continue
@@ -185,6 +205,21 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
                             )
                             if send_wol_packet(client.mac):
                                 state_tracker.mark_wol_sent(client.name)
+                                notifications.send(
+                                    "wake_sent",
+                                    "Wake-on-LAN packet sent",
+                                    f"Sent a wake packet to {client.name} ({client.mac}).",
+                                )
+                            elif client.name not in reported_wol_failures:
+                                reported_wol_failures.add(client.name)
+                                notifications.send(
+                                    "errors",
+                                    "Wake-on-LAN failed",
+                                    (
+                                        "Could not send a wake packet to "
+                                        f"{client.name} ({client.mac})."
+                                    ),
+                                )
                         else:
                             logger.debug(
                                 "Waiting to retry WOL for %s (delay not reached)",
@@ -197,6 +232,7 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
                     restoration_event_start = None
                     state_tracker.reset()
                     wol_being_sent = False
+                    reported_wol_failures.clear()
                 else:
                     if (
                         time.time() - restoration_event_start
@@ -210,9 +246,16 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
                                 "%s failed to come back online within timeout period.",
                                 client,
                             )
+                        failed_clients = ", ".join(sorted(recorded_down_clients))
+                        notifications.send(
+                            "errors",
+                            "Client recovery timed out",
+                            f"These clients did not come back online: {failed_clients}.",
+                        )
                         restoration_event = False
                         restoration_event_start = None
                         wol_being_sent = False
+                        reported_wol_failures.clear()
                     else:
                         pass
 
@@ -221,6 +264,7 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
             state_tracker.set_ups_on_battery(False)
             recorded_down_clients.clear()
             recorded_up_clients.clear()
+            reported_wol_failures.clear()
 
         state_tracker.save_state()
 

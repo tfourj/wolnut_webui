@@ -87,6 +87,39 @@ class WolnutConfig:
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
 
 
+def notifications_config_from_dict(raw: dict | None) -> NotificationsConfig:
+    notifications_raw = raw or {}
+    discord_raw = notifications_raw.get("discord", {}) or {}
+    gotify_raw = notifications_raw.get("gotify", {}) or {}
+    events_raw = notifications_raw.get("events", {}) or {}
+    discord = DiscordNotificationConfig(
+        **{
+            k: v
+            for k, v in discord_raw.items()
+            if k in DiscordNotificationConfig.__dataclass_fields__
+        }
+    )
+    gotify = GotifyNotificationConfig(
+        **{
+            k: v
+            for k, v in gotify_raw.items()
+            if k in GotifyNotificationConfig.__dataclass_fields__
+        }
+    )
+    events = NotificationEventsConfig(
+        **{
+            k: v
+            for k, v in events_raw.items()
+            if k in NotificationEventsConfig.__dataclass_fields__
+        }
+    )
+    return NotificationsConfig(
+        discord=discord,
+        gotify=gotify,
+        events=events,
+    )
+
+
 def find_state_file(state_file: Optional[str] = None) -> str:
     """Find an existing state file or return a writable default path."""
     path = Path(state_file or DEFAULT_STATE_FILEPATH)
@@ -132,36 +165,7 @@ def load_config(
     webui_filtered = {k: v for k, v in webui_raw.items() if k in WebUIConfig.__dataclass_fields__}
     webui = WebUIConfig(**webui_filtered)
 
-    notifications_raw = raw.get("notifications", {}) or {}
-    discord_raw = notifications_raw.get("discord", {}) or {}
-    gotify_raw = notifications_raw.get("gotify", {}) or {}
-    events_raw = notifications_raw.get("events", {}) or {}
-    discord = DiscordNotificationConfig(
-        **{
-            k: v
-            for k, v in discord_raw.items()
-            if k in DiscordNotificationConfig.__dataclass_fields__
-        }
-    )
-    gotify = GotifyNotificationConfig(
-        **{
-            k: v
-            for k, v in gotify_raw.items()
-            if k in GotifyNotificationConfig.__dataclass_fields__
-        }
-    )
-    events = NotificationEventsConfig(
-        **{
-            k: v
-            for k, v in events_raw.items()
-            if k in NotificationEventsConfig.__dataclass_fields__
-        }
-    )
-    notifications = NotificationsConfig(
-        discord=discord,
-        gotify=gotify,
-        events=events,
-    )
+    notifications = notifications_config_from_dict(raw.get("notifications"))
 
     # Determine status file path: CLI arg > config file > default
     final_status_path = status_path or raw.get("status_file")
