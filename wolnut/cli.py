@@ -389,6 +389,17 @@ def _create_default_config(config_path: str, status_file: str | None = None) -> 
         },
         "clients": [],
         "webui": {"suppress_mac_warnings": False},
+        "notifications": {
+            "discord": {"enabled": False, "webhook_url": ""},
+            "gotify": {"enabled": False, "url": "", "token": "", "priority": 5},
+            "events": {
+                "power_loss": True,
+                "power_restored": True,
+                "wake_sent": True,
+                "client_recovered": True,
+                "errors": True,
+            },
+        },
     }
     with open(p, "w") as f:
         yaml.safe_dump(default_cfg, f, sort_keys=False)

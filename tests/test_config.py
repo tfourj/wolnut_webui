@@ -91,6 +91,36 @@ def test_load_config_full(mocker, full_config_dict):
     mock_resolve_mac.assert_called_once_with("server.local")
 
 
+def test_load_config_notifications(mocker, minimal_config_dict):
+    minimal_config_dict["notifications"] = {
+        "discord": {
+            "enabled": True,
+            "webhook_url": "https://discord.example/webhook",
+        },
+        "gotify": {
+            "enabled": True,
+            "url": "https://gotify.example",
+            "token": "secret",
+            "priority": 8,
+        },
+        "events": {"power_loss": False, "errors": True},
+    }
+    mocker.patch(
+        "builtins.open",
+        mocker.mock_open(read_data=yaml.dump(minimal_config_dict)),
+    )
+    mocker.patch("wolnut.config.validate_config")
+
+    cfg = config.load_config("dummy.yaml", None, False)
+
+    assert cfg.notifications.discord.enabled is True
+    assert cfg.notifications.discord.webhook_url == "https://discord.example/webhook"
+    assert cfg.notifications.gotify.token == "secret"
+    assert cfg.notifications.gotify.priority == 8
+    assert cfg.notifications.events.power_loss is False
+    assert cfg.notifications.events.wake_sent is True
+
+
 def test_load_config_file_not_found(mocker):
     """Tests that None is returned when the config file is not found."""
     mocker.patch("builtins.open", side_effect=FileNotFoundError)

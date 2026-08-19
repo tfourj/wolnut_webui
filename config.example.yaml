@@ -18,6 +18,22 @@ wake_on:
 webui:
   suppress_mac_warnings: false  # Set true to hide orange warnings when MAC "auto" cannot be resolved
 
+notifications:
+  discord:
+    enabled: false
+    webhook_url: "https://discord.com/api/webhooks/your-webhook-id/your-webhook-token"
+  gotify:
+    enabled: false
+    url: "https://gotify.example.com"
+    token: "your-gotify-app-token"
+    priority: 5
+  events:
+    power_loss: true
+    power_restored: true
+    wake_sent: true
+    client_recovered: true
+    errors: true
+
 clients:
   - name: "client 1"                  # Human-readable name
     host: 192.168.0.100               # IP address preferred for reliability

@@ -46,6 +46,36 @@ class WebUIConfig:
 
 
 @dataclass
+class DiscordNotificationConfig:
+    enabled: bool = False
+    webhook_url: str = ""
+
+
+@dataclass
+class GotifyNotificationConfig:
+    enabled: bool = False
+    url: str = ""
+    token: str = ""
+    priority: int = 5
+
+
+@dataclass
+class NotificationEventsConfig:
+    power_loss: bool = True
+    power_restored: bool = True
+    wake_sent: bool = True
+    client_recovered: bool = True
+    errors: bool = True
+
+
+@dataclass
+class NotificationsConfig:
+    discord: DiscordNotificationConfig = field(default_factory=DiscordNotificationConfig)
+    gotify: GotifyNotificationConfig = field(default_factory=GotifyNotificationConfig)
+    events: NotificationEventsConfig = field(default_factory=NotificationEventsConfig)
+
+
+@dataclass
 class WolnutConfig:
     nut: NutConfig
     status_file: str
@@ -54,6 +84,7 @@ class WolnutConfig:
     clients: list[ClientConfig] = field(default_factory=list)
     log_level: str = "INFO"
     webui: WebUIConfig = field(default_factory=WebUIConfig)
+    notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
 
 
 def find_state_file(state_file: Optional[str] = None) -> str:
@@ -101,6 +132,37 @@ def load_config(
     webui_filtered = {k: v for k, v in webui_raw.items() if k in WebUIConfig.__dataclass_fields__}
     webui = WebUIConfig(**webui_filtered)
 
+    notifications_raw = raw.get("notifications", {}) or {}
+    discord_raw = notifications_raw.get("discord", {}) or {}
+    gotify_raw = notifications_raw.get("gotify", {}) or {}
+    events_raw = notifications_raw.get("events", {}) or {}
+    discord = DiscordNotificationConfig(
+        **{
+            k: v
+            for k, v in discord_raw.items()
+            if k in DiscordNotificationConfig.__dataclass_fields__
+        }
+    )
+    gotify = GotifyNotificationConfig(
+        **{
+            k: v
+            for k, v in gotify_raw.items()
+            if k in GotifyNotificationConfig.__dataclass_fields__
+        }
+    )
+    events = NotificationEventsConfig(
+        **{
+            k: v
+            for k, v in events_raw.items()
+            if k in NotificationEventsConfig.__dataclass_fields__
+        }
+    )
+    notifications = NotificationsConfig(
+        discord=discord,
+        gotify=gotify,
+        events=events,
+    )
+
     # Determine status file path: CLI arg > config file > default
     final_status_path = status_path or raw.get("status_file")
     # find_state_file will handle None and also ensure the directory exists
@@ -139,6 +201,7 @@ def load_config(
         log_level=raw.get("log_level", DEFAULT_LOG_LEVEL).upper(),
         status_file=final_status_path,
         webui=webui,
+        notifications=notifications,
     )
     logger.info("Config Imported Successfully")
     for client in wolnut_config.clients:

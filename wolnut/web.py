@@ -99,6 +99,32 @@ class WebUIConfigModel(BaseModel):
     suppress_mac_warnings: bool = False
 
 
+class DiscordNotificationModel(BaseModel):
+    enabled: bool = False
+    webhook_url: str = ""
+
+
+class GotifyNotificationModel(BaseModel):
+    enabled: bool = False
+    url: str = ""
+    token: str = ""
+    priority: int = Field(default=5, ge=0, le=10)
+
+
+class NotificationEventsModel(BaseModel):
+    power_loss: bool = True
+    power_restored: bool = True
+    wake_sent: bool = True
+    client_recovered: bool = True
+    errors: bool = True
+
+
+class NotificationsConfigModel(BaseModel):
+    discord: DiscordNotificationModel = Field(default_factory=DiscordNotificationModel)
+    gotify: GotifyNotificationModel = Field(default_factory=GotifyNotificationModel)
+    events: NotificationEventsModel = Field(default_factory=NotificationEventsModel)
+
+
 class ConfigModel(BaseModel):
     log_level: str = "INFO"
     poll_interval: int = 15
@@ -107,6 +133,9 @@ class ConfigModel(BaseModel):
     wake_on: WakeOnModel = Field(default_factory=WakeOnModel)
     clients: list[ClientModel] = Field(default_factory=list)
     webui: WebUIConfigModel = Field(default_factory=WebUIConfigModel)
+    notifications: NotificationsConfigModel = Field(
+        default_factory=NotificationsConfigModel
+    )
 
 
 class WolRequest(BaseModel):
@@ -235,6 +264,22 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                 },
                 "clients": [],
                 "webui": {"suppress_mac_warnings": False},
+                "notifications": {
+                    "discord": {"enabled": False, "webhook_url": ""},
+                    "gotify": {
+                        "enabled": False,
+                        "url": "",
+                        "token": "",
+                        "priority": 5,
+                    },
+                    "events": {
+                        "power_loss": True,
+                        "power_restored": True,
+                        "wake_sent": True,
+                        "client_recovered": True,
+                        "errors": True,
+                    },
+                },
             }
         # normalize defaults if missing
         raw.setdefault("log_level", "INFO")
@@ -253,6 +298,27 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         if "suppress_mac_warnings" in raw and "suppress_mac_warnings" not in raw["webui"]:
             raw["webui"]["suppress_mac_warnings"] = raw.pop("suppress_mac_warnings")
         raw["webui"].setdefault("suppress_mac_warnings", False)
+        raw.setdefault("notifications", {})
+        raw["notifications"].setdefault("discord", {})
+        raw["notifications"]["discord"].setdefault("enabled", False)
+        raw["notifications"]["discord"].setdefault("webhook_url", "")
+        raw["notifications"].setdefault("gotify", {})
+        for key, value in {
+            "enabled": False,
+            "url": "",
+            "token": "",
+            "priority": 5,
+        }.items():
+            raw["notifications"]["gotify"].setdefault(key, value)
+        raw["notifications"].setdefault("events", {})
+        for key in (
+            "power_loss",
+            "power_restored",
+            "wake_sent",
+            "client_recovered",
+            "errors",
+        ):
+            raw["notifications"]["events"].setdefault(key, True)
         for c in raw.get("clients", []) or []:
             c.setdefault("always_wake", False)
             c.setdefault("enabled", True)
