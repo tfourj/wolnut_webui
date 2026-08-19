@@ -1,4 +1,5 @@
 import json
+from urllib import error
 
 from wolnut.config import (
     DiscordNotificationConfig,
@@ -116,3 +117,20 @@ def test_provider_failures_do_not_stop_other_providers(mocker):
     assert results[0].error == "discord unavailable"
     assert results[1].success is True
     gotify.assert_called_once()
+
+
+def test_http_errors_do_not_expose_provider_credentials(mocker):
+    url = "https://discord.example/webhook-secret"
+    mocker.patch(
+        "wolnut.notifications.request.urlopen",
+        side_effect=error.HTTPError(url, 401, "Unauthorized", {}, None),
+    )
+
+    config = NotificationsConfig(
+        discord=DiscordNotificationConfig(enabled=True, webhook_url=url),
+    )
+    result = NotificationService(config).send_test("discord")
+
+    assert result.success is False
+    assert result.error == "notification provider returned HTTP 401"
+    assert "webhook-secret" not in result.error

@@ -2,7 +2,7 @@ import json
 import logging
 from dataclasses import dataclass
 from typing import Callable
-from urllib import parse, request
+from urllib import error, parse, request
 
 from wolnut.config import NotificationsConfig
 
@@ -34,10 +34,17 @@ def _post_json(url: str, payload: dict, timeout: int = 10) -> None:
         headers={"Content-Type": "application/json", "User-Agent": "Wolnut"},
         method="POST",
     )
-    with request.urlopen(req, timeout=timeout) as response:
-        status = getattr(response, "status", 200)
-        if status < 200 or status >= 300:
-            raise RuntimeError(f"notification provider returned HTTP {status}")
+    try:
+        with request.urlopen(req, timeout=timeout) as response:
+            status = getattr(response, "status", 200)
+            if status < 200 or status >= 300:
+                raise RuntimeError(f"notification provider returned HTTP {status}")
+    except error.HTTPError as exc:
+        raise RuntimeError(
+            f"notification provider returned HTTP {exc.code}"
+        ) from None
+    except error.URLError as exc:
+        raise RuntimeError(f"notification request failed: {exc.reason}") from None
 
 
 def send_discord(webhook_url: str, title: str, message: str) -> None:
