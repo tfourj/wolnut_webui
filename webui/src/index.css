@@ -64,6 +64,7 @@ a:hover { text-decoration: underline; }
 
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 20px;
   border-bottom: 1px solid var(--border);
@@ -248,3 +249,69 @@ a:hover { text-decoration: underline; }
   gap: 16px;
 }
 @media (max-width: 700px) { .status-grid { grid-template-columns: 1fr; } }
+
+.provider-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.switch-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.switch-label input,
+.notification-event input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.notification-events {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.notification-event {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0f1115;
+  cursor: pointer;
+}
+
+.notification-event span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.notification-event strong {
+  font-size: 13px;
+}
+
+.notification-event small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+@media (max-width: 700px) {
+  .notification-events {
+    grid-template-columns: 1fr;
+  }
+}

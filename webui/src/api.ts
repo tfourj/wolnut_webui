@@ -25,6 +25,32 @@ export interface WebUIConfig {
   suppress_mac_warnings: boolean
 }
 
+export interface DiscordNotificationConfig {
+  enabled: boolean
+  webhook_url: string
+}
+
+export interface GotifyNotificationConfig {
+  enabled: boolean
+  url: string
+  token: string
+  priority: number
+}
+
+export interface NotificationEventsConfig {
+  power_loss: boolean
+  power_restored: boolean
+  wake_sent: boolean
+  client_recovered: boolean
+  errors: boolean
+}
+
+export interface NotificationsConfig {
+  discord: DiscordNotificationConfig
+  gotify: GotifyNotificationConfig
+  events: NotificationEventsConfig
+}
+
 export interface WolnutConfig {
   log_level: string
   poll_interval: number
@@ -33,6 +59,7 @@ export interface WolnutConfig {
   wake_on: WakeOnConfig
   clients: ClientConfig[]
   webui: WebUIConfig
+  notifications: NotificationsConfig
 }
 
 const TOKEN_KEY = 'wolnut_token'
@@ -135,4 +162,20 @@ export async function pingHost(host: string) {
   })
   if (!res.ok) throw new Error(await res.text())
   return res.json() as Promise<{ host: string; online: boolean }>
+}
+
+export async function testNotification(
+  provider: 'discord' | 'gotify',
+  notifications: NotificationsConfig,
+) {
+  const res = await authFetch('/api/notifications/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider, notifications }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new Error(body?.detail || `Failed to test ${provider}`)
+  }
+  return res.json() as Promise<{ status: string; provider: string }>
 }

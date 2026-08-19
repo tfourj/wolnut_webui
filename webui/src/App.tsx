@@ -1,7 +1,22 @@
 import { useEffect, useState } from 'react'
-import { fetchConfig, saveConfig, fetchStatus, sendWolClient, resolveMac, pingHost, WolnutConfig, getAuthStatus, login as apiLogin, getMe, clearToken, getToken } from './api'
+import {
+  clearToken,
+  fetchConfig,
+  fetchStatus,
+  getAuthStatus,
+  getMe,
+  getToken,
+  login as apiLogin,
+  pingHost,
+  resolveMac,
+  saveConfig,
+  sendWol,
+  sendWolClient,
+  testNotification,
+  WolnutConfig,
+} from './api'
 
-type Tab = 'dashboard' | 'config' | 'clients'
+type Tab = 'dashboard' | 'config' | 'clients' | 'notifications'
 
 const DEFAULT_CFG: WolnutConfig = {
   log_level: 'INFO',
@@ -11,6 +26,17 @@ const DEFAULT_CFG: WolnutConfig = {
   wake_on: { restore_delay_sec: 30, min_battery_percent: 25, client_timeout_sec: 600, reattempt_delay: 30 },
   clients: [],
   webui: { suppress_mac_warnings: false },
+  notifications: {
+    discord: { enabled: false, webhook_url: '' },
+    gotify: { enabled: false, url: '', token: '', priority: 5 },
+    events: {
+      power_loss: true,
+      power_restored: true,
+      wake_sent: true,
+      client_recovered: true,
+      errors: true,
+    },
+  },
 }
 
 export default function App() {
@@ -72,6 +98,9 @@ export default function App() {
     try {
       const c = await fetchConfig()
       if (!c.webui) c.webui = { suppress_mac_warnings: false }
+      if (!c.notifications) {
+        c.notifications = JSON.parse(JSON.stringify(DEFAULT_CFG.notifications))
+      }
       setCfg(c)
       setOriginalCfg(JSON.parse(JSON.stringify(c)))
     } catch (e: any) {
@@ -213,11 +242,20 @@ export default function App() {
         <button className={`tab ${tab === 'clients' ? 'active' : ''}`} onClick={() => setTab('clients')}>
           Clients ({cfg?.clients.length ?? 0})
         </button>
+        <button
+          className={`tab ${tab === 'notifications' ? 'active' : ''}`}
+          onClick={() => setTab('notifications')}
+        >
+          Notifications
+        </button>
       </div>
 
       {tab === 'dashboard' && <Dashboard cfg={cfg} status={status} showToast={showToast} />}
       {tab === 'config' && cfg && <ConfigForm cfg={cfg} setCfg={setCfg} />}
       {tab === 'clients' && cfg && <ClientsTab cfg={cfg} setCfg={setCfg} status={status} showToast={showToast} warnings={saveWarnings} />}
+      {tab === 'notifications' && cfg && (
+        <NotificationsTab cfg={cfg} setCfg={setCfg} showToast={showToast} />
+      )}
 
       {toast && <div className="toast">{toast}</div>}
 
@@ -597,6 +635,224 @@ function ConfigForm({ cfg, setCfg }: { cfg: WolnutConfig; setCfg: (c: WolnutConf
   )
 }
 
+function NotificationsTab({
+  cfg,
+  setCfg,
+  showToast,
+}: {
+  cfg: WolnutConfig
+  setCfg: (c: WolnutConfig) => void
+  showToast: (message: string) => void
+}) {
+  const [testing, setTesting] = useState<'discord' | 'gotify' | null>(null)
+  const notifications = cfg.notifications
+
+  const setDiscord = (patch: Partial<typeof notifications.discord>) => {
+    setCfg({
+      ...cfg,
+      notifications: {
+        ...notifications,
+        discord: { ...notifications.discord, ...patch },
+      },
+    })
+  }
+  const setGotify = (patch: Partial<typeof notifications.gotify>) => {
+    setCfg({
+      ...cfg,
+      notifications: {
+        ...notifications,
+        gotify: { ...notifications.gotify, ...patch },
+      },
+    })
+  }
+  const setEvent = (event: keyof typeof notifications.events, enabled: boolean) => {
+    setCfg({
+      ...cfg,
+      notifications: {
+        ...notifications,
+        events: { ...notifications.events, [event]: enabled },
+      },
+    })
+  }
+  const runTest = async (provider: 'discord' | 'gotify') => {
+    setTesting(provider)
+    try {
+      await testNotification(provider, notifications)
+      showToast(`${provider === 'discord' ? 'Discord' : 'Gotify'} test notification sent`)
+    } catch (error: any) {
+      showToast(`Test failed: ${String(error.message || error)}`)
+    } finally {
+      setTesting(null)
+    }
+  }
+
+  return (
+    <>
+      <div className="card">
+        <h2>Notification events</h2>
+        <p className="desc">Choose which Wolnut events are sent to enabled providers.</p>
+        <div className="notification-events">
+          <NotificationEventToggle
+            label="Power loss"
+            description="UPS switches to battery power"
+            checked={notifications.events.power_loss}
+            onChange={enabled => setEvent('power_loss', enabled)}
+          />
+          <NotificationEventToggle
+            label="Power restored"
+            description="Utility power returns"
+            checked={notifications.events.power_restored}
+            onChange={enabled => setEvent('power_restored', enabled)}
+          />
+          <NotificationEventToggle
+            label="Wake packet sent"
+            description="A Wake-on-LAN packet is sent"
+            checked={notifications.events.wake_sent}
+            onChange={enabled => setEvent('wake_sent', enabled)}
+          />
+          <NotificationEventToggle
+            label="Client recovered"
+            description="A client becomes reachable after waking"
+            checked={notifications.events.client_recovered}
+            onChange={enabled => setEvent('client_recovered', enabled)}
+          />
+          <NotificationEventToggle
+            label="Errors"
+            description="Wake failures and recovery timeouts"
+            checked={notifications.events.errors}
+            onChange={enabled => setEvent('errors', enabled)}
+          />
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="provider-heading">
+          <div>
+            <h2>Discord webhook</h2>
+            <p className="desc">Send event embeds to a Discord channel.</p>
+          </div>
+          <label className="switch-label">
+            <input
+              type="checkbox"
+              checked={notifications.discord.enabled}
+              onChange={event => setDiscord({ enabled: event.target.checked })}
+            />
+            Enabled
+          </label>
+        </div>
+        <div className="field">
+          <label>Webhook URL</label>
+          <input
+            type="password"
+            value={notifications.discord.webhook_url}
+            onChange={event => setDiscord({ webhook_url: event.target.value })}
+            placeholder="https://discord.com/api/webhooks/..."
+            autoComplete="off"
+          />
+          <span className="inline-help">Create this in Discord channel settings under Integrations.</span>
+        </div>
+        <button
+          className="btn btn-ghost"
+          onClick={() => runTest('discord')}
+          disabled={
+            testing !== null
+            || !notifications.discord.enabled
+            || !notifications.discord.webhook_url.trim()
+          }
+        >
+          {testing === 'discord' ? 'Sending...' : 'Send Discord test'}
+        </button>
+      </div>
+
+      <div className="card">
+        <div className="provider-heading">
+          <div>
+            <h2>Gotify</h2>
+            <p className="desc">Send messages through your self-hosted Gotify server.</p>
+          </div>
+          <label className="switch-label">
+            <input
+              type="checkbox"
+              checked={notifications.gotify.enabled}
+              onChange={event => setGotify({ enabled: event.target.checked })}
+            />
+            Enabled
+          </label>
+        </div>
+        <div className="grid2">
+          <div className="field">
+            <label>Server URL</label>
+            <input
+              value={notifications.gotify.url}
+              onChange={event => setGotify({ url: event.target.value })}
+              placeholder="https://gotify.example.com"
+            />
+          </div>
+          <div className="field">
+            <label>App token</label>
+            <input
+              type="password"
+              value={notifications.gotify.token}
+              onChange={event => setGotify({ token: event.target.value })}
+              placeholder="Gotify application token"
+              autoComplete="off"
+            />
+          </div>
+          <div className="field">
+            <label>Priority</label>
+            <input
+              type="number"
+              min={0}
+              max={10}
+              value={notifications.gotify.priority}
+              onChange={event => setGotify({ priority: Number(event.target.value) })}
+            />
+            <span className="inline-help">0 is lowest, 10 is highest.</span>
+          </div>
+        </div>
+        <button
+          className="btn btn-ghost"
+          onClick={() => runTest('gotify')}
+          disabled={
+            testing !== null
+            || !notifications.gotify.enabled
+            || !notifications.gotify.url.trim()
+            || !notifications.gotify.token.trim()
+          }
+        >
+          {testing === 'gotify' ? 'Sending...' : 'Send Gotify test'}
+        </button>
+      </div>
+    </>
+  )
+}
+
+function NotificationEventToggle({
+  label,
+  description,
+  checked,
+  onChange,
+}: {
+  label: string
+  description: string
+  checked: boolean
+  onChange: (enabled: boolean) => void
+}) {
+  return (
+    <label className="notification-event">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={event => onChange(event.target.checked)}
+      />
+      <span>
+        <strong>{label}</strong>
+        <small>{description}</small>
+      </span>
+    </label>
+  )
+}
+
 function ClientsTab({
   cfg,
   setCfg,
@@ -744,7 +1000,6 @@ function ClientsTab({
                       } catch (e: any) {
                         // fallback to direct MAC
                         try {
-                          const { sendWol } = await import('./api')
                           await sendWol(c.mac)
                           showToast(`WOL sent to ${c.mac}`)
                         } catch (e2: any) {
