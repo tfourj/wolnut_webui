@@ -25,6 +25,18 @@ This helps reboot systems automatically after a controlled shutdown caused by a 
 - Persistent state file for post-reboot recovery
 - Runs as a standalone Python service or Docker container
 - WebUI always running on port 8183 for configuration
+- Discord webhook and Gotify notifications with per-event controls
+- Test notifications from the WebUI before saving provider settings
+
+## Notifications
+
+Open the **Notifications** tab in the WebUI to configure Discord or Gotify.
+Each provider can be enabled independently, and event switches control alerts
+for power loss, power restoration, wake packets, recovered clients, and errors.
+
+The test buttons use the values currently in the form, so you can verify a
+webhook URL or Gotify app token before saving. Provider credentials are stored
+in the YAML config file; protect that file as you would any other secret.
 
 ---
 

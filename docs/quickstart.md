@@ -50,4 +50,12 @@ Requires `network_mode: host` for Wake-on-LAN — do not add `ports`. WebUI is a
 
 ## 5. Setup in WebUI
 
-Open `http://<host>:8183`, log in with `ADMIN_USERNAME` / `ADMIN_PASSWORD`, then configure NUT and clients under **Configuration** and **Clients**. All settings are hot-reloaded — no restart needed.
+Open `http://<host>:8183`, log in with `ADMIN_USERNAME` / `ADMIN_PASSWORD`, then
+configure NUT and clients under **Configuration** and **Clients**. All settings
+are hot-reloaded, so no restart is needed.
+
+Optional notifications can be configured under **Notifications**. Enable a
+Discord webhook or Gotify provider, enter its credentials, and use the matching
+test button before saving. Choose which power, wake, recovery, and error events
+each enabled provider receives. Notification credentials are stored in the YAML
+config file, so keep that file private.
