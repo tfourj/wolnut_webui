@@ -55,7 +55,9 @@ configure NUT and clients under **Configuration** and **Clients**. All settings
 are hot-reloaded, so no restart is needed.
 
 Optional notifications can be configured under **Notifications**. Enable a
-Discord webhook or Gotify provider, enter its credentials, and use the matching
-test button before saving. Choose which power, wake, recovery, and error events
-each enabled provider receives. Notification credentials are stored in the YAML
-config file, so keep that file private.
+Discord webhook, Gotify, or ntfy provider, enter its settings, and use the
+matching test button before saving. For ntfy, enter the server root URL and
+topic; an access token is optional for public topics and required when your
+server protects the topic. Choose which power, wake, recovery, and error events
+each enabled provider receives. Notification credentials are stored in the
+YAML config file, so keep that file private.

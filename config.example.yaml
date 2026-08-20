@@ -27,6 +27,12 @@ notifications:
     url: "https://gotify.example.com"
     token: "your-gotify-app-token"
     priority: 5
+  ntfy:
+    enabled: false
+    url: "https://ntfy.sh"
+    topic: "your-ntfy-topic"
+    token: ""  # Optional bearer token for protected topics
+    priority: 3  # 1 is lowest, 3 is default, 5 is highest
   events:
     power_loss: true
     power_restored: true
