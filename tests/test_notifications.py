@@ -4,10 +4,11 @@ from urllib import error
 from wolnut.config import (
     DiscordNotificationConfig,
     GotifyNotificationConfig,
+    NtfyNotificationConfig,
     NotificationsConfig,
 )
 from wolnut.notifications import NotificationService
-from wolnut.providers import send_discord, send_gotify
+from wolnut.providers import send_discord, send_gotify, send_ntfy
 
 
 class FakeResponse:
@@ -49,9 +50,37 @@ def test_send_gotify_posts_message_and_token(mocker):
     assert payload == {"title": "Error", "message": "Failed", "priority": 8}
 
 
+def test_send_ntfy_posts_message_with_bearer_token(mocker):
+    urlopen = mocker.patch(
+        "wolnut.providers._http.request.urlopen",
+        return_value=FakeResponse(),
+    )
+
+    send_ntfy(
+        "https://ntfy.example.com/",
+        "wolnut-alerts",
+        "tk_secret",
+        "Power restored",
+        "UPS is online",
+        4,
+    )
+
+    req = urlopen.call_args.args[0]
+    payload = json.loads(req.data)
+    assert req.full_url == "https://ntfy.example.com"
+    assert req.get_header("Authorization") == "Bearer tk_secret"
+    assert payload == {
+        "topic": "wolnut-alerts",
+        "title": "Power restored",
+        "message": "UPS is online",
+        "priority": 4,
+    }
+
+
 def test_service_sends_to_enabled_providers(mocker):
     discord = mocker.patch("wolnut.notifications.send_discord")
     gotify = mocker.patch("wolnut.notifications.send_gotify")
+    ntfy = mocker.patch("wolnut.notifications.send_ntfy")
     config = NotificationsConfig(
         discord=DiscordNotificationConfig(
             enabled=True,
@@ -62,6 +91,13 @@ def test_service_sends_to_enabled_providers(mocker):
             url="https://gotify.example",
             token="token",
             priority=7,
+        ),
+        ntfy=NtfyNotificationConfig(
+            enabled=True,
+            url="https://ntfy.example",
+            topic="wolnut",
+            token="tk_test",
+            priority=4,
         ),
     )
 
@@ -75,6 +111,14 @@ def test_service_sends_to_enabled_providers(mocker):
         "Wake sent",
         "server",
         7,
+    )
+    ntfy.assert_called_once_with(
+        "https://ntfy.example",
+        "wolnut",
+        "tk_test",
+        "Wake sent",
+        "server",
+        4,
     )
 
 

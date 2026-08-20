@@ -60,6 +60,15 @@ class GotifyNotificationConfig:
 
 
 @dataclass
+class NtfyNotificationConfig:
+    enabled: bool = False
+    url: str = "https://ntfy.sh"
+    topic: str = ""
+    token: str = ""
+    priority: int = 3
+
+
+@dataclass
 class NotificationEventsConfig:
     power_loss: bool = True
     power_restored: bool = True
@@ -72,6 +81,7 @@ class NotificationEventsConfig:
 class NotificationsConfig:
     discord: DiscordNotificationConfig = field(default_factory=DiscordNotificationConfig)
     gotify: GotifyNotificationConfig = field(default_factory=GotifyNotificationConfig)
+    ntfy: NtfyNotificationConfig = field(default_factory=NtfyNotificationConfig)
     events: NotificationEventsConfig = field(default_factory=NotificationEventsConfig)
 
 
@@ -91,6 +101,7 @@ def notifications_config_from_dict(raw: dict | None) -> NotificationsConfig:
     notifications_raw = raw or {}
     discord_raw = notifications_raw.get("discord", {}) or {}
     gotify_raw = notifications_raw.get("gotify", {}) or {}
+    ntfy_raw = notifications_raw.get("ntfy", {}) or {}
     events_raw = notifications_raw.get("events", {}) or {}
     discord = DiscordNotificationConfig(
         **{
@@ -106,6 +117,13 @@ def notifications_config_from_dict(raw: dict | None) -> NotificationsConfig:
             if k in GotifyNotificationConfig.__dataclass_fields__
         }
     )
+    ntfy = NtfyNotificationConfig(
+        **{
+            k: v
+            for k, v in ntfy_raw.items()
+            if k in NtfyNotificationConfig.__dataclass_fields__
+        }
+    )
     events = NotificationEventsConfig(
         **{
             k: v
@@ -116,6 +134,7 @@ def notifications_config_from_dict(raw: dict | None) -> NotificationsConfig:
     return NotificationsConfig(
         discord=discord,
         gotify=gotify,
+        ntfy=ntfy,
         events=events,
     )
 

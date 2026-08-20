@@ -103,6 +103,13 @@ def test_load_config_notifications(mocker, minimal_config_dict):
             "token": "secret",
             "priority": 8,
         },
+        "ntfy": {
+            "enabled": True,
+            "url": "https://ntfy.example",
+            "topic": "wolnut-alerts",
+            "token": "tk_secret",
+            "priority": 4,
+        },
         "events": {"power_loss": False, "errors": True},
     }
     mocker.patch(
@@ -117,6 +124,11 @@ def test_load_config_notifications(mocker, minimal_config_dict):
     assert cfg.notifications.discord.webhook_url == "https://discord.example/webhook"
     assert cfg.notifications.gotify.token == "secret"
     assert cfg.notifications.gotify.priority == 8
+    assert cfg.notifications.ntfy.enabled is True
+    assert cfg.notifications.ntfy.url == "https://ntfy.example"
+    assert cfg.notifications.ntfy.topic == "wolnut-alerts"
+    assert cfg.notifications.ntfy.token == "tk_secret"
+    assert cfg.notifications.ntfy.priority == 4
     assert cfg.notifications.events.power_loss is False
     assert cfg.notifications.events.wake_sent is True
 

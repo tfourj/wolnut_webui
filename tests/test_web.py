@@ -90,3 +90,37 @@ def test_notification_test_uses_submitted_provider_config(tmp_path, mocker):
         "Your notification provider is configured correctly.",
         9,
     )
+
+
+def test_ntfy_notification_test_uses_submitted_provider_config(tmp_path, mocker):
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path)
+    notify = mocker.patch("wolnut.notifications.send_ntfy")
+    client = TestClient(create_app(config_file=str(config_path)))
+
+    response = client.post(
+        "/api/notifications/test",
+        json={
+            "provider": "ntfy",
+            "notifications": {
+                "ntfy": {
+                    "enabled": True,
+                    "url": "https://ntfy.test",
+                    "topic": "wolnut-alerts",
+                    "token": "tk_test",
+                    "priority": 4,
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "sent", "provider": "ntfy"}
+    notify.assert_called_once_with(
+        "https://ntfy.test",
+        "wolnut-alerts",
+        "tk_test",
+        "Wolnut test notification",
+        "Your notification provider is configured correctly.",
+        4,
+    )

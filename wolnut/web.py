@@ -116,6 +116,14 @@ class GotifyNotificationModel(BaseModel):
     priority: int = Field(default=5, ge=0, le=10)
 
 
+class NtfyNotificationModel(BaseModel):
+    enabled: bool = False
+    url: str = "https://ntfy.sh"
+    topic: str = ""
+    token: str = ""
+    priority: int = Field(default=3, ge=1, le=5)
+
+
 class NotificationEventsModel(BaseModel):
     power_loss: bool = True
     power_restored: bool = True
@@ -127,6 +135,7 @@ class NotificationEventsModel(BaseModel):
 class NotificationsConfigModel(BaseModel):
     discord: DiscordNotificationModel = Field(default_factory=DiscordNotificationModel)
     gotify: GotifyNotificationModel = Field(default_factory=GotifyNotificationModel)
+    ntfy: NtfyNotificationModel = Field(default_factory=NtfyNotificationModel)
     events: NotificationEventsModel = Field(default_factory=NotificationEventsModel)
 
 
@@ -149,7 +158,7 @@ class WolRequest(BaseModel):
 
 
 class NotificationTestRequest(BaseModel):
-    provider: Literal["discord", "gotify"]
+    provider: Literal["discord", "gotify", "ntfy"]
     notifications: NotificationsConfigModel
 
 
@@ -282,6 +291,13 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                         "token": "",
                         "priority": 5,
                     },
+                    "ntfy": {
+                        "enabled": False,
+                        "url": "https://ntfy.sh",
+                        "topic": "",
+                        "token": "",
+                        "priority": 3,
+                    },
                     "events": {
                         "power_loss": True,
                         "power_restored": True,
@@ -320,6 +336,15 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             "priority": 5,
         }.items():
             raw["notifications"]["gotify"].setdefault(key, value)
+        raw["notifications"].setdefault("ntfy", {})
+        for key, value in {
+            "enabled": False,
+            "url": "https://ntfy.sh",
+            "topic": "",
+            "token": "",
+            "priority": 3,
+        }.items():
+            raw["notifications"]["ntfy"].setdefault(key, value)
         raw["notifications"].setdefault("events", {})
         for key in (
             "power_loss",

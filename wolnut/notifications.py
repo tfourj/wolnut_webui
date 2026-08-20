@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from wolnut.config import NotificationsConfig
-from wolnut.providers import send_discord, send_gotify
+from wolnut.providers import send_discord, send_gotify, send_ntfy
 
 logger = logging.getLogger("wolnut")
 
@@ -36,6 +36,15 @@ class NotificationService:
                 title,
                 message,
                 self.config.gotify.priority,
+            )
+        if self.config.ntfy.enabled:
+            senders["ntfy"] = lambda title, message: send_ntfy(
+                self.config.ntfy.url,
+                self.config.ntfy.topic,
+                self.config.ntfy.token,
+                title,
+                message,
+                self.config.ntfy.priority,
             )
         return senders
 

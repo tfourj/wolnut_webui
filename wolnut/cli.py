@@ -436,6 +436,13 @@ def _create_default_config(config_path: str, status_file: str | None = None) -> 
         "notifications": {
             "discord": {"enabled": False, "webhook_url": ""},
             "gotify": {"enabled": False, "url": "", "token": "", "priority": 5},
+            "ntfy": {
+                "enabled": False,
+                "url": "https://ntfy.sh",
+                "topic": "",
+                "token": "",
+                "priority": 3,
+            },
             "events": {
                 "power_loss": True,
                 "power_restored": True,

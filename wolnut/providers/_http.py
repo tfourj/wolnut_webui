@@ -10,12 +10,21 @@ def validate_http_url(value: str, field_name: str) -> str:
     return value
 
 
-def post_json(url: str, payload: dict, timeout: int = 10) -> None:
+def post_json(
+    url: str,
+    payload: dict,
+    timeout: int = 10,
+    headers: dict[str, str] | None = None,
+) -> None:
     body = json.dumps(payload).encode("utf-8")
     req = request.Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json", "User-Agent": "Wolnut"},
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "Wolnut",
+            **(headers or {}),
+        },
         method="POST",
     )
     try:
