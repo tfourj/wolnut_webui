@@ -13,6 +13,7 @@ import {
   sendWol,
   sendWolClient,
   testNotification,
+  NotificationProvider,
   WolnutConfig,
 } from './api'
 
@@ -29,6 +30,7 @@ const DEFAULT_CFG: WolnutConfig = {
   notifications: {
     discord: { enabled: false, webhook_url: '' },
     gotify: { enabled: false, url: '', token: '', priority: 5 },
+    ntfy: { enabled: false, url: 'https://ntfy.sh', topic: '', token: '', priority: 3 },
     events: {
       power_loss: true,
       power_restored: true,
@@ -100,6 +102,8 @@ export default function App() {
       if (!c.webui) c.webui = { suppress_mac_warnings: false }
       if (!c.notifications) {
         c.notifications = JSON.parse(JSON.stringify(DEFAULT_CFG.notifications))
+      } else if (!c.notifications.ntfy) {
+        c.notifications.ntfy = { ...DEFAULT_CFG.notifications.ntfy }
       }
       setCfg(c)
       setOriginalCfg(JSON.parse(JSON.stringify(c)))
@@ -644,7 +648,7 @@ function NotificationsTab({
   setCfg: (c: WolnutConfig) => void
   showToast: (message: string) => void
 }) {
-  const [testing, setTesting] = useState<'discord' | 'gotify' | null>(null)
+  const [testing, setTesting] = useState<NotificationProvider | null>(null)
   const notifications = cfg.notifications
 
   const setDiscord = (patch: Partial<typeof notifications.discord>) => {
@@ -665,6 +669,15 @@ function NotificationsTab({
       },
     })
   }
+  const setNtfy = (patch: Partial<typeof notifications.ntfy>) => {
+    setCfg({
+      ...cfg,
+      notifications: {
+        ...notifications,
+        ntfy: { ...notifications.ntfy, ...patch },
+      },
+    })
+  }
   const setEvent = (event: keyof typeof notifications.events, enabled: boolean) => {
     setCfg({
       ...cfg,
@@ -674,11 +687,12 @@ function NotificationsTab({
       },
     })
   }
-  const runTest = async (provider: 'discord' | 'gotify') => {
+  const runTest = async (provider: NotificationProvider) => {
     setTesting(provider)
     try {
       await testNotification(provider, notifications)
-      showToast(`${provider === 'discord' ? 'Discord' : 'Gotify'} test notification sent`)
+      const providerName = provider === 'ntfy' ? 'ntfy' : provider[0].toUpperCase() + provider.slice(1)
+      showToast(`${providerName} test notification sent`)
     } catch (error: any) {
       showToast(`Test failed: ${String(error.message || error)}`)
     } finally {
@@ -821,6 +835,75 @@ function NotificationsTab({
           }
         >
           {testing === 'gotify' ? 'Sending...' : 'Send Gotify test'}
+        </button>
+      </div>
+
+      <div className="card">
+        <div className="provider-heading">
+          <div>
+            <h2>ntfy</h2>
+            <p className="desc">Publish notifications to ntfy.sh or a self-hosted ntfy server.</p>
+          </div>
+          <label className="switch-label">
+            <input
+              type="checkbox"
+              checked={notifications.ntfy.enabled}
+              onChange={event => setNtfy({ enabled: event.target.checked })}
+            />
+            Enabled
+          </label>
+        </div>
+        <div className="grid2">
+          <div className="field">
+            <label>Server URL</label>
+            <input
+              value={notifications.ntfy.url}
+              onChange={event => setNtfy({ url: event.target.value })}
+              placeholder="https://ntfy.sh"
+            />
+          </div>
+          <div className="field">
+            <label>Topic</label>
+            <input
+              value={notifications.ntfy.topic}
+              onChange={event => setNtfy({ topic: event.target.value })}
+              placeholder="wolnut-alerts"
+              autoComplete="off"
+            />
+          </div>
+          <div className="field">
+            <label>Access token</label>
+            <input
+              type="password"
+              value={notifications.ntfy.token}
+              onChange={event => setNtfy({ token: event.target.value })}
+              placeholder="Optional for public topics"
+              autoComplete="off"
+            />
+          </div>
+          <div className="field">
+            <label>Priority</label>
+            <input
+              type="number"
+              min={1}
+              max={5}
+              value={notifications.ntfy.priority}
+              onChange={event => setNtfy({ priority: Number(event.target.value) })}
+            />
+            <span className="inline-help">1 is lowest, 3 is default, 5 is highest.</span>
+          </div>
+        </div>
+        <button
+          className="btn btn-ghost"
+          onClick={() => runTest('ntfy')}
+          disabled={
+            testing !== null
+            || !notifications.ntfy.enabled
+            || !notifications.ntfy.url.trim()
+            || !notifications.ntfy.topic.trim()
+          }
+        >
+          {testing === 'ntfy' ? 'Sending...' : 'Send ntfy test'}
         </button>
       </div>
     </>

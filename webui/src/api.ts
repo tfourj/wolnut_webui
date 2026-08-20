@@ -37,6 +37,14 @@ export interface GotifyNotificationConfig {
   priority: number
 }
 
+export interface NtfyNotificationConfig {
+  enabled: boolean
+  url: string
+  topic: string
+  token: string
+  priority: number
+}
+
 export interface NotificationEventsConfig {
   power_loss: boolean
   power_restored: boolean
@@ -48,8 +56,11 @@ export interface NotificationEventsConfig {
 export interface NotificationsConfig {
   discord: DiscordNotificationConfig
   gotify: GotifyNotificationConfig
+  ntfy: NtfyNotificationConfig
   events: NotificationEventsConfig
 }
+
+export type NotificationProvider = 'discord' | 'gotify' | 'ntfy'
 
 export interface WolnutConfig {
   log_level: string
@@ -165,7 +176,7 @@ export async function pingHost(host: string) {
 }
 
 export async function testNotification(
-  provider: 'discord' | 'gotify',
+  provider: NotificationProvider,
   notifications: NotificationsConfig,
 ) {
   const res = await authFetch('/api/notifications/test', {
