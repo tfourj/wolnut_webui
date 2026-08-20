@@ -257,6 +257,68 @@ a:hover { text-decoration: underline; }
   gap: 16px;
 }
 
+.provider-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding: 4px 4px 10px;
+  margin-bottom: 6px;
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
+}
+
+.provider-tabs::-webkit-scrollbar {
+  height: 6px;
+}
+
+.provider-tabs::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+}
+
+.provider-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-width: 150px;
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.provider-tab:hover {
+  background: #161922;
+  color: var(--text);
+}
+
+.provider-tab.active {
+  background: var(--card);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.provider-tab-status {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #2a2e3a;
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.provider-tab-status.enabled {
+  background: #14321f;
+  color: var(--success);
+}
+
 .switch-label {
   display: inline-flex;
   align-items: center;

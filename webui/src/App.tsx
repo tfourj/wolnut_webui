@@ -19,6 +19,12 @@ import {
 
 type Tab = 'dashboard' | 'config' | 'clients' | 'notifications'
 
+const NOTIFICATION_PROVIDERS: Array<{ id: NotificationProvider; label: string }> = [
+  { id: 'discord', label: 'Discord' },
+  { id: 'gotify', label: 'Gotify' },
+  { id: 'ntfy', label: 'ntfy' },
+]
+
 const DEFAULT_CFG: WolnutConfig = {
   log_level: 'INFO',
   poll_interval: 15,
@@ -649,6 +655,7 @@ function NotificationsTab({
   showToast: (message: string) => void
 }) {
   const [testing, setTesting] = useState<NotificationProvider | null>(null)
+  const [activeProvider, setActiveProvider] = useState<NotificationProvider>('discord')
   const notifications = cfg.notifications
 
   const setDiscord = (patch: Partial<typeof notifications.discord>) => {
@@ -739,7 +746,24 @@ function NotificationsTab({
         </div>
       </div>
 
-      <div className="card">
+      <div className="provider-tabs" aria-label="Notification providers">
+        {NOTIFICATION_PROVIDERS.map(provider => (
+          <button
+            type="button"
+            key={provider.id}
+            className={`provider-tab ${activeProvider === provider.id ? 'active' : ''}`}
+            aria-pressed={activeProvider === provider.id}
+            onClick={() => setActiveProvider(provider.id)}
+          >
+            <span>{provider.label}</span>
+            <span className={`provider-tab-status ${notifications[provider.id].enabled ? 'enabled' : ''}`}>
+              {notifications[provider.id].enabled ? 'On' : 'Off'}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {activeProvider === 'discord' && <div className="card">
         <div className="provider-heading">
           <div>
             <h2>Discord webhook</h2>
@@ -776,9 +800,9 @@ function NotificationsTab({
         >
           {testing === 'discord' ? 'Sending...' : 'Send Discord test'}
         </button>
-      </div>
+      </div>}
 
-      <div className="card">
+      {activeProvider === 'gotify' && <div className="card">
         <div className="provider-heading">
           <div>
             <h2>Gotify</h2>
@@ -836,9 +860,9 @@ function NotificationsTab({
         >
           {testing === 'gotify' ? 'Sending...' : 'Send Gotify test'}
         </button>
-      </div>
+      </div>}
 
-      <div className="card">
+      {activeProvider === 'ntfy' && <div className="card">
         <div className="provider-heading">
           <div>
             <h2>ntfy</h2>
@@ -905,7 +929,7 @@ function NotificationsTab({
         >
           {testing === 'ntfy' ? 'Sending...' : 'Send ntfy test'}
         </button>
-      </div>
+      </div>}
     </>
   )
 }
