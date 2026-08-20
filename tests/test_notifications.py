@@ -6,7 +6,8 @@ from wolnut.config import (
     GotifyNotificationConfig,
     NotificationsConfig,
 )
-from wolnut.notifications import NotificationService, send_discord, send_gotify
+from wolnut.notifications import NotificationService
+from wolnut.providers import send_discord, send_gotify
 
 
 class FakeResponse:
@@ -21,7 +22,7 @@ class FakeResponse:
 
 def test_send_discord_posts_embed(mocker):
     urlopen = mocker.patch(
-        "wolnut.notifications.request.urlopen",
+        "wolnut.providers._http.request.urlopen",
         return_value=FakeResponse(),
     )
 
@@ -36,7 +37,7 @@ def test_send_discord_posts_embed(mocker):
 
 def test_send_gotify_posts_message_and_token(mocker):
     urlopen = mocker.patch(
-        "wolnut.notifications.request.urlopen",
+        "wolnut.providers._http.request.urlopen",
         return_value=FakeResponse(),
     )
 
@@ -122,7 +123,7 @@ def test_provider_failures_do_not_stop_other_providers(mocker):
 def test_http_errors_do_not_expose_provider_credentials(mocker):
     url = "https://discord.example/webhook-secret"
     mocker.patch(
-        "wolnut.notifications.request.urlopen",
+        "wolnut.providers._http.request.urlopen",
         side_effect=error.HTTPError(url, 401, "Unauthorized", {}, None),
     )
 

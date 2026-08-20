@@ -1,10 +1,9 @@
-import json
 import logging
 from dataclasses import dataclass
 from typing import Callable
-from urllib import error, parse, request
 
 from wolnut.config import NotificationsConfig
+from wolnut.providers import send_discord, send_gotify
 
 logger = logging.getLogger("wolnut")
 
@@ -16,73 +15,6 @@ class NotificationResult:
     provider: str
     success: bool
     error: str | None = None
-
-
-def _validate_http_url(value: str, field_name: str) -> str:
-    value = value.strip()
-    parsed = parse.urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError(f"{field_name} must be a valid http or https URL")
-    return value
-
-
-def _post_json(url: str, payload: dict, timeout: int = 10) -> None:
-    body = json.dumps(payload).encode("utf-8")
-    req = request.Request(
-        url,
-        data=body,
-        headers={"Content-Type": "application/json", "User-Agent": "Wolnut"},
-        method="POST",
-    )
-    try:
-        with request.urlopen(req, timeout=timeout) as response:
-            status = getattr(response, "status", 200)
-            if status < 200 or status >= 300:
-                raise RuntimeError(f"notification provider returned HTTP {status}")
-    except error.HTTPError as exc:
-        raise RuntimeError(
-            f"notification provider returned HTTP {exc.code}"
-        ) from None
-    except error.URLError as exc:
-        raise RuntimeError(f"notification request failed: {exc.reason}") from None
-
-
-def send_discord(webhook_url: str, title: str, message: str) -> None:
-    url = _validate_http_url(webhook_url, "Discord webhook URL")
-    _post_json(
-        url,
-        {
-            "username": "Wolnut",
-            "embeds": [
-                {
-                    "title": title,
-                    "description": message,
-                    "color": 5213439,
-                }
-            ],
-        },
-    )
-
-
-def send_gotify(
-    server_url: str,
-    token: str,
-    title: str,
-    message: str,
-    priority: int = 5,
-) -> None:
-    base_url = _validate_http_url(server_url, "Gotify server URL").rstrip("/")
-    if not token.strip():
-        raise ValueError("Gotify app token is required")
-    endpoint = f"{base_url}/message?{parse.urlencode({'token': token.strip()})}"
-    _post_json(
-        endpoint,
-        {
-            "title": title,
-            "message": message,
-            "priority": priority,
-        },
-    )
 
 
 class NotificationService:
