@@ -1350,6 +1350,12 @@ function ClientsTab({
                 <div className="agent-result">
                   Last result: {agentStatus.last_result.status || 'unknown'}
                   {agentStatus.last_result.last_error ? ` · ${agentStatus.last_result.last_error}` : ''}
+                  {agentStatus.last_result.version ? ` · agent ${agentStatus.last_result.version}` : ''}
+                  {agentStatus.last_result.certificate_expires_at
+                    ? ` · certificate expires ${new Date(
+                      agentStatus.last_result.certificate_expires_at * 1000,
+                    ).toLocaleDateString()}`
+                    : ''}
                 </div>
               )}
 

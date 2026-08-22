@@ -253,21 +253,22 @@ class AgentClient:
         started = self._pinned_post("/bootstrap/pair", request, fingerprint)
         agent_id = str(started.get("agent_id", ""))
         csr = str(started.get("csr", ""))
-        if not agent_id or not csr:
+        completion_token = str(started.get("completion_token", ""))
+        if not agent_id or not csr or not completion_token:
             raise AgentError("Agent returned incomplete pairing information")
         server_cert = self.security_store.sign_agent_csr(csr, agent_id)
         completed = self._pinned_post(
             "/bootstrap/complete",
-            {"code": code.strip(), "server_cert": server_cert},
+            {
+                "completion_token": completion_token,
+                "server_cert": server_cert,
+            },
             fingerprint,
         )
         if completed.get("agent_id") != agent_id or completed.get("status") != "paired":
             raise AgentError("Agent did not confirm pairing")
-        return {
-            "agent_id": agent_id,
-            "hostname": started.get("hostname"),
-            "version": started.get("version"),
-        }
+        status = self.status(agent_id)
+        return {"agent_id": agent_id, **status}
 
     def _request(
         self,

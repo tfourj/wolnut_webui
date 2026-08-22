@@ -1,17 +1,23 @@
 package main
 
 import (
+	"bytes"
+	"crypto/tls"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-type fakePoweroff struct{ calls int }
+type fakePoweroff struct{ calls atomic.Int32 }
 
 func (f *fakePoweroff) Poweroff() error {
-	f.calls++
+	f.calls.Add(1)
 	return nil
 }
 
@@ -88,5 +94,55 @@ func TestProcessedCommandsAreBounded(t *testing.T) {
 	pruneProcessed(values, 100)
 	if len(values) != 100 {
 		t.Fatalf("expected 100 commands, got %d", len(values))
+	}
+}
+
+func TestShutdownHandlerIsIdempotent(t *testing.T) {
+	s := &store{dir: t.TempDir()}
+	if _, err := s.initialize(); err != nil {
+		t.Fatal(err)
+	}
+	executor := &fakePoweroff{}
+	service := &server{store: s, poweroff: executor, shutdownDelay: 0}
+	now := time.Now()
+	payload, _ := json.Marshal(shutdownRequest{
+		CommandID: "outage:server", Source: "automatic",
+		RequestedAt: now.Unix(), ExpiresAt: now.Add(time.Minute).Unix(),
+	})
+
+	for attempt := 0; attempt < 2; attempt++ {
+		request := httptest.NewRequest(http.MethodPost, "/v1/shutdown", bytes.NewReader(payload))
+		response := httptest.NewRecorder()
+		service.handleShutdown(response, request)
+		if response.Code != http.StatusAccepted && response.Code != http.StatusOK {
+			t.Fatalf("unexpected response %d: %s", response.Code, response.Body.String())
+		}
+	}
+	time.Sleep(10 * time.Millisecond)
+	if executor.calls.Load() != 1 {
+		t.Fatalf("expected one poweroff, got %d", executor.calls.Load())
+	}
+}
+
+func TestControllerCertificateIsRequiredAfterPairing(t *testing.T) {
+	s := &store{dir: t.TempDir()}
+	state, err := s.initialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.ControllerCAPEM = "configured"
+	if err := s.save(state); err != nil {
+		t.Fatal(err)
+	}
+	service := &server{store: s, poweroff: &fakePoweroff{}}
+	handler := service.requireController(service.handleStatus)
+	request := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	request.TLS = &tls.ConnectionState{}
+	response := httptest.NewRecorder()
+
+	handler(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", response.Code)
 	}
 }

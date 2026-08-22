@@ -510,4 +510,10 @@ def web_only(config_file: str | None, status_file: str | None, host: str, port: 
         click.echo("FastAPI/uvicorn not installed")
         raise click.Abort()
     app = create_app(config_file=config_file, status_file=status_file)
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        proxy_headers=True,
+        forwarded_allow_ips=os.getenv("WOLNUT_FORWARDED_ALLOW_IPS", "127.0.0.1"),
+    )

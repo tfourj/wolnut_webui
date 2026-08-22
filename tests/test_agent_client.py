@@ -5,7 +5,7 @@ import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.x509.oid import NameOID
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 from wolnut.agent_client import AgentError, SecurityStore, normalize_fingerprint
 
@@ -58,3 +58,32 @@ def test_sign_agent_csr_requires_matching_identity(tmp_path):
         security.sign_agent_csr(
             csr.public_bytes(serialization.Encoding.PEM).decode(), "expected"
         )
+
+
+def test_controller_and_agent_certificates_have_separate_roles(tmp_path):
+    security = SecurityStore(tmp_path / "security")
+    identity = security.ensure_controller_identity()
+    controller = x509.load_pem_x509_certificate(identity.client_cert.read_bytes())
+    controller_usage = controller.extensions.get_extension_for_class(
+        x509.ExtendedKeyUsage
+    ).value
+    assert list(controller_usage) == [ExtendedKeyUsageOID.CLIENT_AUTH]
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    csr = (
+        x509.CertificateSigningRequestBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "agent")]))
+        .add_extension(
+            x509.SubjectAlternativeName(
+                [x509.UniformResourceIdentifier("urn:wolnut:agent:agent-1")]
+            ),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+    signed = security.sign_agent_csr(
+        csr.public_bytes(serialization.Encoding.PEM).decode(), "agent-1"
+    )
+    agent = x509.load_pem_x509_certificate(signed.encode())
+    agent_usage = agent.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+    assert list(agent_usage) == [ExtendedKeyUsageOID.SERVER_AUTH]

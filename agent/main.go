@@ -49,6 +49,8 @@ type persistedState struct {
 	PairingCodeHash     string               `json:"pairing_code_hash,omitempty"`
 	PairingExpiresAt    int64                `json:"pairing_expires_at,omitempty"`
 	PairingFailures     int                  `json:"pairing_failures,omitempty"`
+	CompletionTokenHash string               `json:"completion_token_hash,omitempty"`
+	CompletionExpiresAt int64                `json:"completion_expires_at,omitempty"`
 	Processed           map[string]processed `json:"processed,omitempty"`
 }
 
@@ -209,8 +211,9 @@ func (systemdPoweroff) Poweroff() error {
 }
 
 type server struct {
-	store    *store
-	poweroff poweroffExecutor
+	store         *store
+	poweroff      poweroffExecutor
+	shutdownDelay time.Duration
 }
 
 func (s *server) routes() http.Handler {
@@ -319,17 +322,43 @@ func (s *server) handleBootstrapPair(w http.ResponseWriter, r *http.Request) {
 	state.ControllerCAPEM = request.ControllerCA
 	state.ControllerCertPEM = request.ControllerCert
 	state.PendingServerKeyPEM = key
+	completionToken, completionHash, err := newSecret()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create pairing session")
+		return
+	}
+	state.PairingCodeHash = ""
+	state.PairingExpiresAt = 0
+	state.CompletionTokenHash = completionHash
+	state.CompletionExpiresAt = time.Now().Add(2 * time.Minute).Unix()
 	if err := s.store.save(state); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not save pairing state")
 		return
 	}
 	hostname, _ := os.Hostname()
-	writeJSON(w, http.StatusOK, map[string]any{"agent_id": state.AgentID, "csr": csr, "hostname": hostname, "version": version})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"agent_id":         state.AgentID,
+		"csr":              csr,
+		"completion_token": completionToken,
+		"hostname":         hostname,
+		"version":          version,
+	})
 }
 
 type completeRequest struct {
-	Code       string `json:"code"`
-	ServerCert string `json:"server_cert"`
+	CompletionToken string `json:"completion_token"`
+	ServerCert      string `json:"server_cert"`
+}
+
+func validateCompletionToken(state *persistedState, token string) error {
+	if state.CompletionTokenHash == "" || time.Now().Unix() > state.CompletionExpiresAt {
+		return errors.New("pairing completion token expired")
+	}
+	sum := sha256.Sum256([]byte(strings.TrimSpace(token)))
+	if !strings.EqualFold(hex.EncodeToString(sum[:]), state.CompletionTokenHash) {
+		return errors.New("invalid pairing completion token")
+	}
+	return nil
 }
 
 func (s *server) handleBootstrapComplete(w http.ResponseWriter, r *http.Request) {
@@ -346,7 +375,7 @@ func (s *server) handleBootstrapComplete(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusConflict, "pairing has not been started")
 		return
 	}
-	if err := s.validatePairingCode(state, request.Code); err != nil {
+	if err := validateCompletionToken(state, request.CompletionToken); err != nil {
 		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
@@ -376,6 +405,8 @@ func (s *server) handleBootstrapComplete(w http.ResponseWriter, r *http.Request)
 	state.PairingCodeHash = ""
 	state.PairingExpiresAt = 0
 	state.PairingFailures = 0
+	state.CompletionTokenHash = ""
+	state.CompletionExpiresAt = 0
 	if err := s.store.save(state); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not complete pairing")
 		return
@@ -407,12 +438,17 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	state, _ := s.store.load()
 	hostname, _ := os.Hostname()
+	certificateExpiresAt := int64(0)
+	if certificate, err := parseCertificate(state.ServerCertPEM); err == nil {
+		certificateExpiresAt = certificate.NotAfter.Unix()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"protocol_version": protocolVersion,
-		"agent_id":         state.AgentID,
-		"hostname":         hostname,
-		"version":          version,
-		"paired":           true,
+		"protocol_version":       protocolVersion,
+		"agent_id":               state.AgentID,
+		"hostname":               hostname,
+		"version":                version,
+		"paired":                 true,
+		"certificate_expires_at": certificateExpiresAt,
 	})
 }
 
@@ -472,7 +508,7 @@ func (s *server) handleShutdown(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "accepted", "command_id": request.CommandID, "duplicate": false})
 	go func() {
-		time.Sleep(2 * time.Second)
+		time.Sleep(s.shutdownDelay)
 		if err := s.poweroff.Poweroff(); err != nil {
 			log.Printf("poweroff failed: %v", err)
 		}
@@ -513,6 +549,10 @@ func (s *server) handleUnpair(w http.ResponseWriter, r *http.Request) {
 	state.ServerKeyPEM = ""
 	state.PendingServerKeyPEM = ""
 	state.PairingCodeHash = ""
+	state.PairingExpiresAt = 0
+	state.PairingFailures = 0
+	state.CompletionTokenHash = ""
+	state.CompletionExpiresAt = 0
 	state.Processed = map[string]processed{}
 	if err := s.store.save(state); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not reset pairing")
@@ -575,16 +615,19 @@ func pairingCode(stateStore *store) error {
 	if err != nil {
 		return err
 	}
-	if state.ControllerCAPEM != "" {
+	if state.ServerCertPEM != "" {
 		return errors.New("agent is already paired; reset pairing first")
 	}
-	random := make([]byte, 16)
-	if _, err := rand.Read(random); err != nil {
+	code, codeHash, err := newSecret()
+	if err != nil {
 		return err
 	}
-	code := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(random)
-	sum := sha256.Sum256([]byte(code))
-	state.PairingCodeHash = hex.EncodeToString(sum[:])
+	state.ControllerCAPEM = ""
+	state.ControllerCertPEM = ""
+	state.PendingServerKeyPEM = ""
+	state.CompletionTokenHash = ""
+	state.CompletionExpiresAt = 0
+	state.PairingCodeHash = codeHash
 	state.PairingExpiresAt = time.Now().Add(10 * time.Minute).Unix()
 	state.PairingFailures = 0
 	if err := stateStore.save(state); err != nil {
@@ -598,6 +641,16 @@ func pairingCode(stateStore *store) error {
 	fmt.Printf("Certificate fingerprint: %s\n", fingerprint)
 	fmt.Println("Expires in 10 minutes")
 	return nil
+}
+
+func newSecret() (string, string, error) {
+	random := make([]byte, 16)
+	if _, err := rand.Read(random); err != nil {
+		return "", "", err
+	}
+	secret := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(random)
+	sum := sha256.Sum256([]byte(secret))
+	return secret, hex.EncodeToString(sum[:]), nil
 }
 
 func resetPairing(stateStore *store, confirmed bool) error {
@@ -616,6 +669,8 @@ func resetPairing(stateStore *store, confirmed bool) error {
 	state.PairingCodeHash = ""
 	state.PairingExpiresAt = 0
 	state.PairingFailures = 0
+	state.CompletionTokenHash = ""
+	state.CompletionExpiresAt = 0
 	state.Processed = map[string]processed{}
 	return stateStore.save(state)
 }
@@ -679,7 +734,9 @@ func runServe(stateDir, listen string) error {
 	if _, err := stateStore.initialize(); err != nil {
 		return err
 	}
-	service := &server{store: stateStore, poweroff: systemdPoweroff{}}
+	service := &server{
+		store: stateStore, poweroff: systemdPoweroff{}, shutdownDelay: 2 * time.Second,
+	}
 	httpServer := &http.Server{
 		Addr:              listen,
 		Handler:           service.routes(),

@@ -460,6 +460,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         source: str | None = None,
         command_id: str | None = None,
         error: str | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         path = Path(st_path)
         with state_lock:
@@ -482,6 +483,10 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                     "updated_at": int(time.time()),
                 }
             )
+            if details:
+                for key in ("hostname", "version", "certificate_expires_at"):
+                    if details.get(key) is not None:
+                        shutdown_state[key] = details[key]
             if status in {"paired", "online", "accepted"}:
                 shutdown_state["last_seen_at"] = int(time.time())
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -692,7 +697,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             return value
 
         config_store.update(persist_pairing)
-        _record_agent_result(req.client_name, status="paired")
+        _record_agent_result(req.client_name, status="paired", details=result)
         logger.info("Agent paired for client %s by %s", req.client_name, user)
         return {"status": "paired", **result}
 
@@ -712,7 +717,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         except AgentError as error:
             _record_agent_result(client_name, status="failed", error=str(error))
             raise HTTPException(status_code=502, detail=str(error)) from error
-        _record_agent_result(client_name, status="online")
+        _record_agent_result(client_name, status="online", details=result)
         return result
 
     @app.post("/api/agents/{client_name}/shutdown")
@@ -981,7 +986,16 @@ def start_web_server(host: str = "0.0.0.0", port: int = 8183, config_file: str |
     app = create_app(config_file=config_file, status_file=status_file)
 
     def _run():
-        uvicorn.run(app, host=host, port=port, log_level="info")
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            log_level="info",
+            proxy_headers=True,
+            forwarded_allow_ips=os.getenv(
+                "WOLNUT_FORWARDED_ALLOW_IPS", "127.0.0.1"
+            ),
+        )
 
     t = threading.Thread(target=_run, daemon=True, name="wolnut-web")
     t.start()
@@ -993,4 +1007,10 @@ if __name__ == "__main__":
     import uvicorn
 
     _app = create_app()
-    uvicorn.run(_app, host="0.0.0.0", port=8183)
+    uvicorn.run(
+        _app,
+        host="0.0.0.0",
+        port=8183,
+        proxy_headers=True,
+        forwarded_allow_ips=os.getenv("WOLNUT_FORWARDED_ALLOW_IPS", "127.0.0.1"),
+    )
