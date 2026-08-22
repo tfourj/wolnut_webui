@@ -664,6 +664,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                     "certificate_expires_at",
                     "auto_update",
                     "update_status",
+                    "update_source",
                     "latest_version",
                     "last_update_error",
                     "update_checked_at",

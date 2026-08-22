@@ -442,7 +442,7 @@ func TestUpdatePolicyIsPersistedAndStartsCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !state.AutoUpdate || updater.calls.Load() != 1 || state.UpdateStatus != "up_to_date" {
+	if !state.AutoUpdate || updater.calls.Load() != 1 || state.UpdateStatus != "up_to_date" || state.UpdateSource != "automatic" {
 		t.Fatalf("update policy was not applied: %+v, calls=%d", state, updater.calls.Load())
 	}
 	service.autoUpdateMu.Lock()
@@ -488,6 +488,13 @@ func TestAutoUpdateSchedulerChecksAfterInitialDelay(t *testing.T) {
 	if updater.calls.Load() != 1 {
 		t.Fatalf("expected scheduled update check, got %d", updater.calls.Load())
 	}
+	state, err = s.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.UpdateSource != "automatic" {
+		t.Fatalf("scheduled update source was %q", state.UpdateSource)
+	}
 }
 
 func TestManualUpdateHandlerSchedulesOnlyOneCheck(t *testing.T) {
@@ -511,6 +518,13 @@ func TestManualUpdateHandlerSchedulesOnlyOneCheck(t *testing.T) {
 	}
 	if updater.calls.Load() != 1 {
 		t.Fatalf("expected one update check, got %d", updater.calls.Load())
+	}
+	state, err := s.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.UpdateSource != "manual" {
+		t.Fatalf("manual update source was %q", state.UpdateSource)
 	}
 }
 

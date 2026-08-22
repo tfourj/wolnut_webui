@@ -59,6 +59,7 @@ type persistedState struct {
 	Processed           map[string]processed `json:"processed,omitempty"`
 	AutoUpdate          bool                 `json:"auto_update"`
 	UpdateStatus        string               `json:"update_status,omitempty"`
+	UpdateSource        string               `json:"update_source,omitempty"`
 	LatestVersion       string               `json:"latest_version,omitempty"`
 	LastUpdateError     string               `json:"last_update_error,omitempty"`
 	UpdateCheckedAt     int64                `json:"update_checked_at,omitempty"`
@@ -507,6 +508,7 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"certificate_expires_at": certificateExpiresAt,
 		"auto_update":            state.AutoUpdate,
 		"update_status":          state.UpdateStatus,
+		"update_source":          state.UpdateSource,
 		"latest_version":         state.LatestVersion,
 		"last_update_error":      state.LastUpdateError,
 		"update_checked_at":      state.UpdateCheckedAt,
@@ -536,7 +538,7 @@ func (s *server) handleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "configured", "auto_update": request.Enabled})
 	if request.Enabled {
 		s.startAutoUpdateScheduler(6 * time.Hour)
-		s.startUpdate()
+		s.startUpdate("automatic")
 	} else {
 		s.stopAutoUpdateScheduler()
 	}
@@ -551,14 +553,14 @@ func (s *server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &request) {
 		return
 	}
-	if !s.startUpdate() {
+	if !s.startUpdate("manual") {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "agent update is already running"})
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "checking"})
 }
 
-func (s *server) startUpdate() bool {
+func (s *server) startUpdate(source string) bool {
 	s.updateMu.Lock()
 	if s.updateRunning || s.updater == nil {
 		s.updateMu.Unlock()
@@ -569,6 +571,7 @@ func (s *server) startUpdate() bool {
 
 	if err := s.store.update(func(state *persistedState) {
 		state.UpdateStatus = "checking"
+		state.UpdateSource = source
 		state.LastUpdateError = ""
 		state.UpdateCheckedAt = time.Now().Unix()
 	}); err != nil {
@@ -649,7 +652,7 @@ func (s *server) runAutoUpdates(stop <-chan struct{}, firstCheck time.Duration) 
 			if err != nil || !state.AutoUpdate {
 				return
 			}
-			s.startUpdate()
+			s.startUpdate("automatic")
 			timer.Reset(6 * time.Hour)
 		}
 	}
@@ -754,6 +757,7 @@ func (s *server) handleUnpair(w http.ResponseWriter, r *http.Request) {
 	state.Processed = map[string]processed{}
 	state.AutoUpdate = false
 	state.UpdateStatus = ""
+	state.UpdateSource = ""
 	state.LatestVersion = ""
 	state.LastUpdateError = ""
 	state.UpdateCheckedAt = 0
@@ -900,6 +904,7 @@ func resetPairing(stateStore *store, confirmed bool) error {
 	state.Processed = map[string]processed{}
 	state.AutoUpdate = false
 	state.UpdateStatus = ""
+	state.UpdateSource = ""
 	state.LatestVersion = ""
 	state.LastUpdateError = ""
 	state.UpdateCheckedAt = 0
