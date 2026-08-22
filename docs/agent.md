@@ -55,7 +55,9 @@ sudo ./wolnut-agent-linux-ARCH install-service
 `install-service` copies the binary to `/usr/local/bin/wolnut-agent`, creates a
 hardened root systemd service, and starts it on `0.0.0.0:8184`. Agent state and
 private keys are stored in `/var/lib/wolnut-agent/state.json` with root-only
-permissions.
+permissions. The local listen configuration is stored in
+`/etc/wolnut-agent/agent.env`; edit it only as root, then restart
+`wolnut-agent`.
 
 To use another address or port:
 

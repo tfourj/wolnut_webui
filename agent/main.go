@@ -18,21 +18,24 @@ import (
 	"io"
 	"log"
 	"math/big"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
 const (
-	protocolVersion = 1
-	defaultStateDir = "/var/lib/wolnut-agent"
-	defaultListen   = "0.0.0.0:8184"
+	protocolVersion  = 1
+	defaultStateDir  = "/var/lib/wolnut-agent"
+	defaultConfigDir = "/etc/wolnut-agent"
+	defaultListen    = "0.0.0.0:8184"
 )
 
 var version = "dev"
@@ -96,6 +99,9 @@ func (s *store) saveUnlocked(state *persistedState) error {
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return err
 	}
+	if err := os.Chmod(s.dir, 0o700); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err
@@ -108,6 +114,21 @@ func (s *store) saveUnlocked(state *persistedState) error {
 		return err
 	}
 	return os.Rename(tmp, s.path())
+}
+
+func (s *store) acceptCommand(commandID string, acceptedAt int64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.loadUnlocked()
+	if err != nil {
+		return false, err
+	}
+	if _, duplicate := state.Processed[commandID]; duplicate {
+		return true, nil
+	}
+	state.Processed[commandID] = processed{AcceptedAt: acceptedAt}
+	pruneProcessed(state.Processed, 100)
+	return false, s.saveUnlocked(state)
 }
 
 func (s *store) initialize() (*persistedState, error) {
@@ -204,10 +225,17 @@ func createCSR(agentID string) (string, string, error) {
 }
 
 type poweroffExecutor interface{ Poweroff() error }
-type systemdPoweroff struct{}
+type commandExecutor func(name string, args ...string) error
+type systemdPoweroff struct{ run commandExecutor }
 
-func (systemdPoweroff) Poweroff() error {
-	return exec.Command("/usr/bin/systemctl", "poweroff").Run()
+func (executor systemdPoweroff) Poweroff() error {
+	run := executor.run
+	if run == nil {
+		run = func(name string, args ...string) error {
+			return exec.Command(name, args...).Run()
+		}
+	}
+	return run("/usr/bin/systemctl", "poweroff")
 }
 
 type server struct {
@@ -491,19 +519,13 @@ func (s *server) handleShutdown(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	state, err := s.store.load()
+	duplicate, err := s.store.acceptCommand(request.CommandID, time.Now().Unix())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "state unavailable")
 		return
 	}
-	if _, duplicate := state.Processed[request.CommandID]; duplicate {
+	if duplicate {
 		writeJSON(w, http.StatusOK, map[string]any{"status": "accepted", "command_id": request.CommandID, "duplicate": true})
-		return
-	}
-	state.Processed[request.CommandID] = processed{AcceptedAt: time.Now().Unix()}
-	pruneProcessed(state.Processed, 100)
-	if err := s.store.save(state); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not persist command")
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "accepted", "command_id": request.CommandID, "duplicate": false})
@@ -675,9 +697,27 @@ func resetPairing(stateStore *store, confirmed bool) error {
 	return stateStore.save(state)
 }
 
+func validateListenAddress(listen string) error {
+	if strings.ContainsAny(listen, "\r\n\t ") {
+		return errors.New("listen address must not contain whitespace")
+	}
+	_, portValue, err := net.SplitHostPort(listen)
+	if err != nil {
+		return fmt.Errorf("invalid listen address: %w", err)
+	}
+	port, err := strconv.Atoi(portValue)
+	if err != nil || port < 1 || port > 65535 {
+		return errors.New("listen port must be between 1 and 65535")
+	}
+	return nil
+}
+
 func installService(listen string) error {
 	if os.Geteuid() != 0 {
 		return errors.New("install-service must run as root")
+	}
+	if err := validateListenAddress(listen); err != nil {
+		return err
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -691,7 +731,26 @@ func installService(listen string) error {
 	if err := os.WriteFile(binaryPath, data, 0o755); err != nil {
 		return err
 	}
+	if err := os.Chmod(binaryPath, 0o755); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(defaultStateDir, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(defaultStateDir, 0o700); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(defaultConfigDir, 0o750); err != nil {
+		return err
+	}
+	if err := os.Chmod(defaultConfigDir, 0o750); err != nil {
+		return err
+	}
+	configPath := filepath.Join(defaultConfigDir, "agent.env")
+	if err := os.WriteFile(configPath, []byte("WOLNUT_AGENT_LISTEN="+listen+"\n"), 0o640); err != nil {
+		return err
+	}
+	if err := os.Chmod(configPath, 0o640); err != nil {
 		return err
 	}
 	unit := `[Unit]
@@ -701,7 +760,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/wolnut-agent serve --listen ` + listen + `
+EnvironmentFile=/etc/wolnut-agent/agent.env
+ExecStart=/usr/local/bin/wolnut-agent serve --listen ${WOLNUT_AGENT_LISTEN}
 Restart=on-failure
 RestartSec=5
 User=root

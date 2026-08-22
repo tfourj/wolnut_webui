@@ -50,6 +50,11 @@ jobs:
         with:
           go-version-file: agent/go.mod
           cache: false
+      - name: Set up arm64 emulation
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
       - name: Create output directory
         run: mkdir -p ../dist
       - name: Build static agent
@@ -61,9 +66,8 @@ jobs:
         run: >-
           go build -trimpath -ldflags "-s -w -X main.version=${VERSION#v}"
           -o ../dist/wolnut-agent-linux-${GOARCH} .
-      - name: Smoke test native binary
-        if: matrix.arch == 'amd64'
-        run: ../dist/wolnut-agent-linux-amd64 version
+      - name: Smoke test agent binary
+        run: ../dist/wolnut-agent-linux-${{ matrix.arch }} version
       - name: Create checksum
         working-directory: dist
         run: sha256sum wolnut-agent-linux-${{ matrix.arch }} > wolnut-agent-linux-${{ matrix.arch }}.sha256
