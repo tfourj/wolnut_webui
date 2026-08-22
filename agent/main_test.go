@@ -246,6 +246,68 @@ func TestListenAddressValidation(t *testing.T) {
 	}
 }
 
+func TestOutboundEnrollmentOverHTTPS(t *testing.T) {
+	s := &store{dir: t.TempDir()}
+	state, err := s.initialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var firstCSR string
+	var attempts int
+	controller := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected method %s", r.Method)
+		}
+		var request outboundEnrollmentRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		if request.Token != "one-time-secret" || request.AgentID != state.AgentID {
+			t.Errorf("unexpected enrollment identity or token")
+		}
+		attempts++
+		if attempts == 1 {
+			firstCSR = request.CSR
+			writeError(w, http.StatusServiceUnavailable, "temporary failure")
+			return
+		}
+		if request.CSR != firstCSR {
+			t.Error("agent did not reuse its pending CSR after a lost response")
+		}
+		caPEM, controllerCertPEM, serverCertPEM := testEnrollmentCertificates(
+			t, request.CSR, request.AgentID,
+		)
+		writeJSON(w, http.StatusOK, outboundEnrollmentResponse{
+			Status: "paired", ProtocolVersion: protocolVersion, AgentID: request.AgentID,
+			ControllerCAPEM: caPEM, ControllerCertPEM: controllerCertPEM,
+			ServerCertPEM: serverCertPEM,
+		})
+	}))
+	defer controller.Close()
+
+	if err := enrollAgent(s, controller.URL, "one-time-secret", controller.Client()); err == nil {
+		t.Fatal("temporary controller failure was not returned")
+	}
+	if err := enrollAgent(s, controller.URL, "one-time-secret", controller.Client()); err != nil {
+		t.Fatal(err)
+	}
+	state, err = s.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ServerCertPEM == "" || state.ControllerCAPEM == "" || state.PendingServerKeyPEM != "" {
+		t.Fatal("enrollment credentials were not persisted correctly")
+	}
+}
+
+func TestOutboundEnrollmentRejectsInsecureURL(t *testing.T) {
+	s := &store{dir: t.TempDir()}
+	if err := enrollAgent(s, "http://wolnut.example/api/agents/enroll", "token", nil); err == nil {
+		t.Fatal("insecure enrollment URL was accepted")
+	}
+}
+
 func TestControllerCertificateIsRequiredAfterPairing(t *testing.T) {
 	s := &store{dir: t.TempDir()}
 	state, err := s.initialize()
@@ -366,4 +428,70 @@ func testPKI(t *testing.T, agentID string) (string, string, string, tls.Certific
 		t.Fatal(err)
 	}
 	return string(caPEM), serverCertPEM, serverKeyPEM, controllerCertificate
+}
+
+func testEnrollmentCertificates(t *testing.T, csrPEM, agentID string) (string, string, string) {
+	t.Helper()
+	now := time.Now()
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(10), Subject: pkix.Name{CommonName: "enrollment CA"},
+		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), IsCA: true,
+		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caCertificate, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}))
+
+	controllerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(11), Subject: pkix.Name{CommonName: "controller"},
+		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	controllerDER, err := x509.CreateCertificate(
+		rand.Reader, controllerTemplate, caCertificate, &controllerKey.PublicKey, caKey,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: controllerDER}))
+
+	csrBlock, _ := pem.Decode([]byte(csrPEM))
+	if csrBlock == nil {
+		t.Fatal("agent returned invalid CSR PEM")
+	}
+	csr, err := x509.ParseCertificateRequest(csrBlock.Bytes)
+	if err != nil || csr.CheckSignature() != nil {
+		t.Fatal("agent returned invalid CSR")
+	}
+	identity, _ := url.Parse("urn:wolnut:agent:" + agentID)
+	serverTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(12), Subject: csr.Subject,
+		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		URIs:        []*url.URL{identity},
+	}
+	serverDER, err := x509.CreateCertificate(
+		rand.Reader, serverTemplate, caCertificate, csr.PublicKey, caKey,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER}))
+	return caPEM, controllerPEM, serverPEM
 }

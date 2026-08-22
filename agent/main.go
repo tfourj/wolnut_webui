@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -48,6 +49,7 @@ type persistedState struct {
 	ControllerCertPEM   string               `json:"controller_cert_pem,omitempty"`
 	ServerCertPEM       string               `json:"server_cert_pem,omitempty"`
 	ServerKeyPEM        string               `json:"server_key_pem,omitempty"`
+	PendingServerCSRPEM string               `json:"pending_server_csr_pem,omitempty"`
 	PendingServerKeyPEM string               `json:"pending_server_key_pem,omitempty"`
 	PairingCodeHash     string               `json:"pairing_code_hash,omitempty"`
 	PairingExpiresAt    int64                `json:"pairing_expires_at,omitempty"`
@@ -349,6 +351,7 @@ func (s *server) handleBootstrapPair(w http.ResponseWriter, r *http.Request) {
 	}
 	state.ControllerCAPEM = request.ControllerCA
 	state.ControllerCertPEM = request.ControllerCert
+	state.PendingServerCSRPEM = csr
 	state.PendingServerKeyPEM = key
 	completionToken, completionHash, err := newSecret()
 	if err != nil {
@@ -429,6 +432,7 @@ func (s *server) handleBootstrapComplete(w http.ResponseWriter, r *http.Request)
 	}
 	state.ServerCertPEM = request.ServerCert
 	state.ServerKeyPEM = state.PendingServerKeyPEM
+	state.PendingServerCSRPEM = ""
 	state.PendingServerKeyPEM = ""
 	state.PairingCodeHash = ""
 	state.PairingExpiresAt = 0
@@ -569,6 +573,7 @@ func (s *server) handleUnpair(w http.ResponseWriter, r *http.Request) {
 	state.ControllerCertPEM = ""
 	state.ServerCertPEM = ""
 	state.ServerKeyPEM = ""
+	state.PendingServerCSRPEM = ""
 	state.PendingServerKeyPEM = ""
 	state.PairingCodeHash = ""
 	state.PairingExpiresAt = 0
@@ -646,6 +651,7 @@ func pairingCode(stateStore *store) error {
 	}
 	state.ControllerCAPEM = ""
 	state.ControllerCertPEM = ""
+	state.PendingServerCSRPEM = ""
 	state.PendingServerKeyPEM = ""
 	state.CompletionTokenHash = ""
 	state.CompletionExpiresAt = 0
@@ -687,6 +693,7 @@ func resetPairing(stateStore *store, confirmed bool) error {
 	state.ControllerCertPEM = ""
 	state.ServerCertPEM = ""
 	state.ServerKeyPEM = ""
+	state.PendingServerCSRPEM = ""
 	state.PendingServerKeyPEM = ""
 	state.PairingCodeHash = ""
 	state.PairingExpiresAt = 0
@@ -694,6 +701,138 @@ func resetPairing(stateStore *store, confirmed bool) error {
 	state.CompletionTokenHash = ""
 	state.CompletionExpiresAt = 0
 	state.Processed = map[string]processed{}
+	return stateStore.save(state)
+}
+
+type outboundEnrollmentRequest struct {
+	Token    string `json:"token"`
+	AgentID  string `json:"agent_id"`
+	CSR      string `json:"csr"`
+	Hostname string `json:"hostname"`
+	Version  string `json:"version"`
+}
+
+type outboundEnrollmentResponse struct {
+	Status            string `json:"status"`
+	ProtocolVersion   int    `json:"protocol_version"`
+	AgentID           string `json:"agent_id"`
+	ControllerCAPEM   string `json:"controller_ca"`
+	ControllerCertPEM string `json:"controller_cert"`
+	ServerCertPEM     string `json:"server_cert"`
+}
+
+func enrollmentHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 20 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS13,
+		}},
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func enrollAgent(stateStore *store, enrollmentURL, token string, client *http.Client) error {
+	parsedURL, err := url.Parse(enrollmentURL)
+	if err != nil || parsedURL.Scheme != "https" || parsedURL.Host == "" || parsedURL.User != nil {
+		return errors.New("enrollment URL must be a valid HTTPS URL")
+	}
+	if strings.TrimSpace(token) == "" {
+		return errors.New("enrollment token is required")
+	}
+	state, err := stateStore.initialize()
+	if err != nil {
+		return err
+	}
+	if state.ServerCertPEM != "" {
+		return nil
+	}
+	if state.PendingServerCSRPEM == "" || state.PendingServerKeyPEM == "" {
+		csr, key, err := createCSR(state.AgentID)
+		if err != nil {
+			return err
+		}
+		state.PendingServerCSRPEM = csr
+		state.PendingServerKeyPEM = key
+		if err := stateStore.save(state); err != nil {
+			return err
+		}
+	}
+	hostname, _ := os.Hostname()
+	payload, err := json.Marshal(outboundEnrollmentRequest{
+		Token: strings.TrimSpace(token), AgentID: state.AgentID,
+		CSR: state.PendingServerCSRPEM, Hostname: hostname, Version: version,
+	})
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequest(http.MethodPost, enrollmentURL, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("User-Agent", "wolnut-agent/"+version)
+	if client == nil {
+		client = enrollmentHTTPClient()
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("secure enrollment request failed: %w", err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 64*1024))
+	if err != nil {
+		return errors.New("could not read enrollment response")
+	}
+	if response.StatusCode != http.StatusOK {
+		var failure map[string]any
+		_ = json.Unmarshal(body, &failure)
+		message, _ := failure["detail"].(string)
+		if message == "" {
+			message = fmt.Sprintf("controller returned status %d", response.StatusCode)
+		}
+		return fmt.Errorf("enrollment failed: %s", message)
+	}
+	var result outboundEnrollmentResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return errors.New("controller returned an invalid enrollment response")
+	}
+	if result.Status != "paired" || result.ProtocolVersion != protocolVersion || result.AgentID != state.AgentID {
+		return errors.New("controller enrollment identity or protocol version does not match")
+	}
+	ca, err := parseCertificate(result.ControllerCAPEM)
+	if err != nil || !ca.IsCA {
+		return errors.New("controller returned an invalid CA certificate")
+	}
+	controller, err := parseCertificate(result.ControllerCertPEM)
+	if err != nil || !hasUsage(controller, x509.ExtKeyUsageClientAuth) {
+		return errors.New("controller returned an invalid client certificate")
+	}
+	serverCertificate, err := parseCertificate(result.ServerCertPEM)
+	if err != nil || !hasUsage(serverCertificate, x509.ExtKeyUsageServerAuth) {
+		return errors.New("controller returned an invalid agent certificate")
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	if _, err := controller.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
+		return errors.New("controller client certificate verification failed")
+	}
+	if _, err := serverCertificate.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
+		return errors.New("agent certificate verification failed")
+	}
+	if !certificateHasIdentity(serverCertificate, "urn:wolnut:agent:"+state.AgentID) {
+		return errors.New("agent certificate identity mismatch")
+	}
+	if _, err := tls.X509KeyPair([]byte(result.ServerCertPEM), []byte(state.PendingServerKeyPEM)); err != nil {
+		return errors.New("agent certificate does not match the pending private key")
+	}
+	state.ControllerCAPEM = result.ControllerCAPEM
+	state.ControllerCertPEM = result.ControllerCertPEM
+	state.ServerCertPEM = result.ServerCertPEM
+	state.ServerKeyPEM = state.PendingServerKeyPEM
+	state.PendingServerCSRPEM = ""
+	state.PendingServerKeyPEM = ""
 	return stateStore.save(state)
 }
 
@@ -712,12 +851,15 @@ func validateListenAddress(listen string) error {
 	return nil
 }
 
-func installService(listen string) error {
+func installService(listen, enrollmentURL, enrollmentToken string) error {
 	if os.Geteuid() != 0 {
 		return errors.New("install-service must run as root")
 	}
 	if err := validateListenAddress(listen); err != nil {
 		return err
+	}
+	if (enrollmentURL == "") != (enrollmentToken == "") {
+		return errors.New("enroll-url and enrollment-token must be provided together")
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -739,6 +881,13 @@ func installService(listen string) error {
 	}
 	if err := os.Chmod(defaultStateDir, 0o700); err != nil {
 		return err
+	}
+	if enrollmentURL != "" {
+		if err := enrollAgent(
+			&store{dir: defaultStateDir}, enrollmentURL, enrollmentToken, nil,
+		); err != nil {
+			return fmt.Errorf("automatic enrollment failed: %w", err)
+		}
 	}
 	if err := os.MkdirAll(defaultConfigDir, 0o750); err != nil {
 		return err
@@ -813,7 +962,7 @@ func runServe(stateDir, listen string) error {
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: wolnut-agent <serve|pairing-code|reset-pairing|install-service|version>")
+		fmt.Fprintln(os.Stderr, "usage: wolnut-agent <serve|pairing-code|reset-pairing|enroll|install-service|version>")
 		os.Exit(2)
 	}
 	command := os.Args[1]
@@ -821,6 +970,8 @@ func main() {
 	stateDir := flags.String("state-dir", defaultStateDir, "agent state directory")
 	listen := flags.String("listen", defaultListen, "listen address")
 	confirm := flags.Bool("confirm", false, "confirm destructive action")
+	enrollmentURL := flags.String("enroll-url", "", "Wolnut HTTPS enrollment endpoint")
+	enrollmentToken := flags.String("enrollment-token", "", "one-time Wolnut enrollment token")
 	_ = flags.Parse(os.Args[2:])
 	stateStore := &store{dir: *stateDir}
 	var err error
@@ -831,8 +982,10 @@ func main() {
 		err = pairingCode(stateStore)
 	case "reset-pairing":
 		err = resetPairing(stateStore, *confirm)
+	case "enroll":
+		err = enrollAgent(stateStore, *enrollmentURL, *enrollmentToken, nil)
 	case "install-service":
-		err = installService(*listen)
+		err = installService(*listen, *enrollmentURL, *enrollmentToken)
 	case "version", "--version":
 		fmt.Printf("wolnut-agent %s protocol v%d\n", version, protocolVersion)
 	default:
