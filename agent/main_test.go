@@ -112,6 +112,35 @@ func TestStoreUsesPrivatePermissions(t *testing.T) {
 	}
 }
 
+func TestUpdateStateWritesDoNotLoseCommandLedgerEntries(t *testing.T) {
+	s := &store{dir: t.TempDir()}
+	if _, err := s.initialize(); err != nil {
+		t.Fatal(err)
+	}
+	var operations sync.WaitGroup
+	for index := 0; index < 100; index++ {
+		operations.Add(2)
+		go func(command int) {
+			defer operations.Done()
+			_, _ = s.acceptCommand(fmt.Sprintf("command-%d", command), int64(command))
+		}(index)
+		go func() {
+			defer operations.Done()
+			_ = s.update(func(state *persistedState) {
+				state.UpdateStatus = "checking"
+			})
+		}()
+	}
+	operations.Wait()
+	state, err := s.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Processed) != 100 {
+		t.Fatalf("expected 100 command entries, got %d", len(state.Processed))
+	}
+}
+
 func TestPairingCodeExpiresAndLocksAfterFailures(t *testing.T) {
 	s := &store{dir: t.TempDir()}
 	state, err := s.initialize()

@@ -103,6 +103,17 @@ func (s *store) save(state *persistedState) error {
 	return s.saveUnlocked(state)
 }
 
+func (s *store) update(change func(*persistedState)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.loadUnlocked()
+	if err != nil {
+		return err
+	}
+	change(state)
+	return s.saveUnlocked(state)
+}
+
 func (s *store) saveUnlocked(state *persistedState) error {
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return err
@@ -514,14 +525,10 @@ func (s *server) handleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &request) {
 		return
 	}
-	state, err := s.store.load()
-	if err != nil {
+	if err := s.store.update(func(state *persistedState) {
+		state.AutoUpdate = request.Enabled
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "state unavailable")
-		return
-	}
-	state.AutoUpdate = request.Enabled
-	if err := s.store.save(state); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not save update policy")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "configured", "auto_update": request.Enabled})
@@ -555,22 +562,17 @@ func (s *server) startUpdate() bool {
 	s.updateRunning = true
 	s.updateMu.Unlock()
 
-	state, err := s.store.load()
-	if err != nil {
-		s.finishUpdate()
-		return false
-	}
-	state.UpdateStatus = "checking"
-	state.LastUpdateError = ""
-	state.UpdateCheckedAt = time.Now().Unix()
-	if err := s.store.save(state); err != nil {
+	if err := s.store.update(func(state *persistedState) {
+		state.UpdateStatus = "checking"
+		state.LastUpdateError = ""
+		state.UpdateCheckedAt = time.Now().Unix()
+	}); err != nil {
 		s.finishUpdate()
 		return false
 	}
 	go func() {
 		result, updateErr := s.updater.Install(version)
-		state, loadErr := s.store.load()
-		if loadErr == nil {
+		_ = s.store.update(func(state *persistedState) {
 			if updateErr != nil {
 				state.UpdateStatus = "failed"
 				state.LastUpdateError = updateErr.Error()
@@ -582,15 +584,13 @@ func (s *server) startUpdate() bool {
 					state.UpdateInstalledAt = time.Now().Unix()
 				}
 			}
-			_ = s.store.save(state)
-		}
+		})
 		if updateErr == nil && result.Status == "restart_pending" {
 			if restartErr := s.updater.Restart(); restartErr != nil {
-				if current, err := s.store.load(); err == nil {
-					current.UpdateStatus = "failed"
-					current.LastUpdateError = "could not restart agent service"
-					_ = s.store.save(current)
-				}
+				_ = s.store.update(func(state *persistedState) {
+					state.UpdateStatus = "failed"
+					state.LastUpdateError = "could not restart agent service"
+				})
 			}
 		}
 		s.finishUpdate()
