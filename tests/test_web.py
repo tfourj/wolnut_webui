@@ -8,6 +8,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
+from wolnut.agent_client import AgentError
 from wolnut.web import create_app
 
 
@@ -429,6 +430,127 @@ def test_manual_shutdown_requires_exact_device_name(tmp_path, monkeypatch, mocke
     assert rejected.status_code == 400
     assert accepted.status_code == 200
     agent.shutdown.assert_called_once()
+
+
+def test_agent_update_can_be_requested_for_paired_client(tmp_path, monkeypatch, mocker):
+    config = {
+        "nut": {"ups": "ups@localhost"},
+        "clients": [
+            {
+                "name": "server",
+                "host": "server.local",
+                "mac": "00:11:22:33:44:55",
+                "shutdown": {
+                    "agent_id": "agent-123",
+                    "agent_port": 8184,
+                },
+            }
+        ],
+    }
+    client, _ = _secure_app_client(tmp_path, monkeypatch, config)
+    agent = mocker.patch("wolnut.web.AgentClient").return_value
+    agent.update.return_value = {"status": "checking"}
+
+    response = client.post("/api/agents/server/update")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "checking"}
+    agent.update.assert_called_once_with("agent-123")
+
+
+def test_agent_auto_update_toggle_is_acknowledged_before_persisting(
+    tmp_path, monkeypatch, mocker
+):
+    config = {
+        "nut": {"ups": "ups@localhost"},
+        "clients": [
+            {
+                "name": "server",
+                "host": "server.local",
+                "mac": "00:11:22:33:44:55",
+                "shutdown": {
+                    "agent_id": "agent-123",
+                    "agent_port": 8184,
+                    "auto_update": False,
+                },
+            }
+        ],
+    }
+    client, config_path = _secure_app_client(tmp_path, monkeypatch, config)
+    agent = mocker.patch("wolnut.web.AgentClient").return_value
+    agent.set_auto_update.return_value = {
+        "status": "configured",
+        "auto_update": True,
+    }
+
+    response = client.post("/api/agents/server/auto-update", json={"enabled": True})
+
+    assert response.status_code == 200
+    assert (
+        yaml.safe_load(config_path.read_text())["clients"][0]["shutdown"]["auto_update"]
+        is True
+    )
+    agent.set_auto_update.assert_called_once_with("agent-123", True)
+
+
+def test_agent_auto_update_failure_leaves_setting_disabled(
+    tmp_path, monkeypatch, mocker
+):
+    config = {
+        "nut": {"ups": "ups@localhost"},
+        "clients": [
+            {
+                "name": "server",
+                "host": "server.local",
+                "mac": "00:11:22:33:44:55",
+                "shutdown": {
+                    "agent_id": "agent-123",
+                    "agent_port": 8184,
+                    "auto_update": False,
+                },
+            }
+        ],
+    }
+    client, config_path = _secure_app_client(tmp_path, monkeypatch, config)
+    agent = mocker.patch("wolnut.web.AgentClient").return_value
+    agent.set_auto_update.side_effect = AgentError("agent unavailable")
+
+    response = client.post("/api/agents/server/auto-update", json={"enabled": True})
+
+    assert response.status_code == 502
+    assert (
+        yaml.safe_load(config_path.read_text())["clients"][0]["shutdown"]["auto_update"]
+        is False
+    )
+
+
+def test_generic_config_save_cannot_bypass_agent_update_policy(tmp_path, monkeypatch):
+    config = {
+        "nut": {"ups": "ups@localhost"},
+        "clients": [
+            {
+                "name": "server",
+                "host": "server.local",
+                "mac": "00:11:22:33:44:55",
+                "shutdown": {
+                    "agent_id": "agent-123",
+                    "agent_port": 8184,
+                    "auto_update": False,
+                },
+            }
+        ],
+    }
+    client, config_path = _secure_app_client(tmp_path, monkeypatch, config)
+    submitted = client.get("/api/config").json()
+    submitted["clients"][0]["shutdown"]["auto_update"] = True
+
+    response = client.put("/api/config", json=submitted)
+
+    assert response.status_code == 409
+    assert (
+        yaml.safe_load(config_path.read_text())["clients"][0]["shutdown"]["auto_update"]
+        is False
+    )
 
 
 def test_shutdown_setting_changes_require_secure_admin(tmp_path):

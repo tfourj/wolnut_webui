@@ -382,3 +382,11 @@ class AgentClient:
 
     def unpair(self, agent_id: str) -> dict[str, Any]:
         return self._request("POST", "/v1/unpair", agent_id, {})
+
+    def update(self, agent_id: str) -> dict[str, Any]:
+        return self._request("POST", "/v1/update", agent_id, {})
+
+    def set_auto_update(self, agent_id: str, enabled: bool) -> dict[str, Any]:
+        return self._request(
+            "POST", "/v1/update-policy", agent_id, {"enabled": enabled}
+        )

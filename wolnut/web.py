@@ -200,6 +200,10 @@ class AgentUnpairRequest(BaseModel):
     force_local: bool = False
 
 
+class AgentAutoUpdateRequest(BaseModel):
+    enabled: bool
+
+
 class AgentEnrollmentRequest(BaseModel):
     client_name: str
     agent_port: int = Field(default=8184, ge=1, le=65535)
@@ -614,7 +618,17 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                 }
             )
             if details:
-                for key in ("hostname", "version", "certificate_expires_at"):
+                for key in (
+                    "hostname",
+                    "version",
+                    "certificate_expires_at",
+                    "auto_update",
+                    "update_status",
+                    "latest_version",
+                    "last_update_error",
+                    "update_checked_at",
+                    "update_installed_at",
+                ):
                     if details.get(key) is not None:
                         shutdown_state[key] = details[key]
             if status in {"paired", "online", "accepted"}:
@@ -708,6 +722,11 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                             "Agent pairing changed while editing; refresh the configuration "
                             "and try again"
                         ),
+                    )
+                if shutdown["auto_update"] != previous_shutdown["auto_update"]:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Use the agent auto-update control to change this setting",
                     )
                 if shutdown != previous_shutdown:
                     _require_secure_admin(request)
@@ -1108,6 +1127,82 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         logger.warning("Manual shutdown accepted for %s by %s", client_name, user)
         return result
 
+    @app.post("/api/agents/{client_name}/update")
+    def update_agent(
+        client_name: str,
+        request: Request,
+        user: str = Depends(require_auth),
+    ):
+        _require_secure_admin(request)
+        client = _find_client(_read_config_or_default(), client_name)
+        agent_id = (client.get("shutdown", {}) or {}).get("agent_id")
+        if not agent_id:
+            raise HTTPException(status_code=409, detail="Client agent is not paired")
+        try:
+            result = _agent_client(client).update(agent_id)
+        except AgentError as error:
+            _record_agent_result(client_name, status="update_failed", error=str(error))
+            raise HTTPException(status_code=502, detail=str(error)) from error
+        _record_agent_result(client_name, status="update_checking")
+        logger.warning("Agent update check requested for %s by %s", client_name, user)
+        return result
+
+    @app.post("/api/agents/{client_name}/auto-update")
+    def set_agent_auto_update(
+        client_name: str,
+        req: AgentAutoUpdateRequest,
+        request: Request,
+        user: str = Depends(require_auth),
+    ):
+        _require_secure_admin(request)
+        raw = _read_config_or_default()
+        client = _find_client(raw, client_name)
+        shutdown = client.get("shutdown", {}) or {}
+        agent_id = shutdown.get("agent_id")
+        if not agent_id:
+            raise HTTPException(status_code=409, detail="Client agent is not paired")
+        previous = bool(shutdown.get("auto_update", False))
+        try:
+            result = _agent_client(client).set_auto_update(agent_id, req.enabled)
+        except AgentError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+
+        def persist_policy(value: dict) -> dict:
+            target = _find_client(value, client_name)
+            target_shutdown = target.setdefault("shutdown", {})
+            if target_shutdown.get("agent_id") != agent_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Agent pairing changed while update policy was being saved",
+                )
+            target_shutdown["auto_update"] = req.enabled
+            validate_config(value)
+            return value
+
+        try:
+            config_store.update(persist_policy)
+        except Exception:
+            try:
+                _agent_client(client).set_auto_update(agent_id, previous)
+            except AgentError:
+                logger.error(
+                    "Could not restore agent update policy for %s after save failure",
+                    client_name,
+                )
+            raise
+        _record_agent_result(
+            client_name,
+            status="online",
+            details={"auto_update": req.enabled},
+        )
+        logger.warning(
+            "Agent auto-update %s for %s by %s",
+            "enabled" if req.enabled else "disabled",
+            client_name,
+            user,
+        )
+        return result
+
     @app.post("/api/agents/{client_name}/unpair")
     def unpair_agent(
         client_name: str,
@@ -1139,6 +1234,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             shutdown = target.setdefault("shutdown", {})
             shutdown["enabled"] = False
             shutdown["agent_id"] = None
+            shutdown["auto_update"] = False
             validate_config(value)
             return value
 

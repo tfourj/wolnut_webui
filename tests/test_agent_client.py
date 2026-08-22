@@ -126,3 +126,16 @@ def test_controller_and_agent_certificates_have_separate_roles(tmp_path):
     agent = x509.load_pem_x509_certificate(signed.encode())
     agent_usage = agent.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
     assert list(agent_usage) == [ExtendedKeyUsageOID.SERVER_AUTH]
+
+
+def test_update_operations_use_fixed_agent_endpoints(mocker):
+    agent = AgentClient("agent.local")
+    request = mocker.patch.object(agent, "_request", return_value={"status": "ok"})
+
+    agent.update("agent-id")
+    agent.set_auto_update("agent-id", True)
+
+    assert request.call_args_list == [
+        mocker.call("POST", "/v1/update", "agent-id", {}),
+        mocker.call("POST", "/v1/update-policy", "agent-id", {"enabled": True}),
+    ]
