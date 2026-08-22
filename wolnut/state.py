@@ -60,6 +60,7 @@ class ClientStateTracker:
                     "wol_sent_at": 0,
                     "skip": False,
                     "shutdown": self._new_shutdown_state(),
+                    "agent_update": self._new_agent_update_state(),
                 }
 
     @staticmethod
@@ -73,6 +74,14 @@ class ClientStateTracker:
             "battery_percent": None,
             "source": None,
             "failure_notified": False,
+        }
+
+    @staticmethod
+    def _new_agent_update_state() -> Dict[str, Any]:
+        return {
+            "initialized": False,
+            "installed_at": 0,
+            "version": "",
         }
 
     def _load_state(self):
@@ -91,6 +100,7 @@ class ClientStateTracker:
             self._client_states = save_data.get("clients", {})
             for client_state in self._client_states.values():
                 client_state.setdefault("shutdown", self._new_shutdown_state())
+                client_state.setdefault("agent_update", self._new_agent_update_state())
             self._status_hash = status_hash
             logger.info("State loaded from %s", self._status_file)
         except Exception as e:
@@ -272,6 +282,39 @@ class ClientStateTracker:
             shutdown["failure_notified"] = True
             self._dirty = True
 
+    def observe_agent_update(
+        self,
+        client_name: str,
+        installed_at: int,
+        version: str,
+        source: str,
+        status: str,
+    ) -> bool:
+        if client_name not in self._client_states:
+            return False
+        update = self._client_states[client_name].setdefault(
+            "agent_update", self._new_agent_update_state()
+        )
+        previous = int(update.get("installed_at", 0) or 0)
+        initialized = bool(update.get("initialized", False))
+        if not initialized or installed_at > previous:
+            update.update(
+                {
+                    "initialized": True,
+                    "installed_at": installed_at,
+                    "version": version,
+                }
+            )
+            self._dirty = True
+        if not initialized:
+            return False
+        return (
+            installed_at > previous
+            and installed_at > 0
+            and source == "automatic"
+            and status == "updated"
+        )
+
     def reset(self):
         for state in self._client_states.values():
             state.update(
@@ -300,6 +343,7 @@ class ClientStateTracker:
                     "wol_sent_at": 0,
                     "skip": False,
                     "shutdown": self._new_shutdown_state(),
+                    "agent_update": self._new_agent_update_state(),
                 }
                 self._dirty = True
                 logger.info("Tracking new client: %s", client.name)

@@ -104,7 +104,9 @@ def test_service_sends_to_enabled_providers(mocker):
     results = NotificationService(config).send("wake_sent", "Wake sent", "server")
 
     assert all(result.success for result in results)
-    discord.assert_called_once_with("https://discord.example/hook", "Wake sent", "server")
+    discord.assert_called_once_with(
+        "https://discord.example/hook", "Wake sent", "server"
+    )
     gotify.assert_called_once_with(
         "https://gotify.example",
         "token",
@@ -133,6 +135,25 @@ def test_service_skips_disabled_event(mocker):
     config.events.errors = False
 
     results = NotificationService(config).send("errors", "Error", "Failed")
+
+    assert results == []
+    discord.assert_not_called()
+
+
+def test_agent_update_notification_is_disabled_by_default(mocker):
+    discord = mocker.patch("wolnut.notifications.send_discord")
+    config = NotificationsConfig(
+        discord=DiscordNotificationConfig(
+            enabled=True,
+            webhook_url="https://discord.example/hook",
+        ),
+    )
+
+    results = NotificationService(config).send(
+        "agent_update_succeeded",
+        "Agent update installed",
+        "server updated",
+    )
 
     assert results == []
     discord.assert_not_called()

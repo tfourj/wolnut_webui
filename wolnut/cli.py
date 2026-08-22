@@ -3,12 +3,13 @@ import logging
 import os
 import time
 
+from wolnut.agent_updates import AgentUpdateMonitor
 from wolnut.config import load_config, DEFAULT_CONFIG_FILEPATHS
-from wolnut.state import ClientStateTracker
 from wolnut.monitor import get_ups_status, is_client_online
 from wolnut.notifications import NotificationService
-from wolnut.wol import send_wol_packet
 from wolnut.shutdown import ShutdownCoordinator, parse_ups_snapshot
+from wolnut.state import ClientStateTracker
+from wolnut.wol import send_wol_packet
 
 logger = logging.getLogger("wolnut")
 
@@ -60,6 +61,7 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
         logger.info("WOLNUT is resuming from a UPS battery event")
         on_battery = True
     shutdown_coordinator = ShutdownCoordinator()
+    agent_update_monitor = AgentUpdateMonitor()
 
     ups_status = get_ups_status(
         config.nut.ups,
@@ -133,6 +135,7 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
             logger.warning(
                 "UPS status is incomplete; shutdown and restoration actions are paused"
             )
+            agent_update_monitor.poll(config, state_tracker, notifications)
             state_tracker.save_state()
             time.sleep(config.poll_interval)
             continue
@@ -320,6 +323,7 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
             recorded_up_clients.clear()
             reported_wol_failures.clear()
 
+        agent_update_monitor.poll(config, state_tracker, notifications)
         state_tracker.save_state()
 
         time.sleep(config.poll_interval)
