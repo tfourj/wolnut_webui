@@ -27,7 +27,12 @@ import {
   NotificationProvider,
   WolnutConfig,
 } from './api'
-import { clientNavigationReducer, INITIAL_CLIENT_NAVIGATION } from './clientNavigation'
+import {
+  clientNavigationReducer,
+  INITIAL_CLIENT_NAVIGATION,
+  type ClientNavigationAction,
+  type ClientNavigationState,
+} from './clientNavigation'
 import {
   isAgentUpdateAvailable,
   isCertificateFingerprintValid,
@@ -70,6 +75,10 @@ const DEFAULT_CFG: WolnutConfig = {
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard')
+  const [clientNavigation, dispatchClientNavigation] = useReducer(
+    clientNavigationReducer,
+    INITIAL_CLIENT_NAVIGATION,
+  )
   const [cfg, setCfg] = useState<WolnutConfig | null>(null)
   const [originalCfg, setOriginalCfg] = useState<WolnutConfig | null>(null)
   const [status, setStatus] = useState<any>(null)
@@ -302,6 +311,8 @@ export default function App() {
           isDirty={isDirty}
           shutdownAdminReady={shutdownAdminConfigured && secureTransport}
           reload={load}
+          clientNavigation={clientNavigation}
+          dispatchClientNavigation={dispatchClientNavigation}
         />
       )}
       {tab === 'notifications' && cfg && (
@@ -1032,6 +1043,8 @@ function ClientsTab({
   isDirty,
   shutdownAdminReady,
   reload,
+  clientNavigation,
+  dispatchClientNavigation,
 }: {
   cfg: WolnutConfig
   setCfg: (c: WolnutConfig) => void
@@ -1041,6 +1054,8 @@ function ClientsTab({
   isDirty: boolean
   shutdownAdminReady: boolean
   reload: () => Promise<void>
+  clientNavigation: ClientNavigationState
+  dispatchClientNavigation: (action: ClientNavigationAction) => void
 }) {
   const [pairingIndex, setPairingIndex] = useState<number | null>(null)
   const [pairingCode, setPairingCode] = useState('')
@@ -1056,10 +1071,6 @@ function ClientsTab({
   const [enrollmentStatus, setEnrollmentStatus] = useState<AgentEnrollmentStatus | null>(null)
   const [manualInstallIndex, setManualInstallIndex] = useState<number | null>(null)
   const [manualCommands, setManualCommands] = useState<ManualAgentInstallCommands | null>(null)
-  const [clientNavigation, dispatchClientNavigation] = useReducer(
-    clientNavigationReducer,
-    INITIAL_CLIENT_NAVIGATION,
-  )
   const activeClientIndex = clientNavigation.clientIndex
   const activeClientSection = clientNavigation.section
 

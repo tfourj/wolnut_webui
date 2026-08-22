@@ -25,6 +25,15 @@ describe('client configuration navigation', () => {
     expect(selected).toEqual({ clientIndex: 3, section: 'main' })
   })
 
+  it('preserves the agent section when configuration reloads', () => {
+    const reloaded = clientNavigationReducer({ clientIndex: 1, section: 'agent' }, {
+      type: 'sync-client-count',
+      clientCount: 2,
+    })
+
+    expect(reloaded).toEqual({ clientIndex: 1, section: 'agent' })
+  })
+
   it('keeps the same logical client selected when an earlier client is removed', () => {
     const selected = clientNavigationReducer({ clientIndex: 2, section: 'agent' }, {
       type: 'remove-client',
