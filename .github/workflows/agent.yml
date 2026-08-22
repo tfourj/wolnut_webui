@@ -97,6 +97,16 @@ jobs:
           cd dist
           sha256sum install.sh > install.sh.sha256
           sha256sum uninstall.sh > uninstall.sh.sha256
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            VERSION="0.0.0"
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Agent release tags must use vX.Y.Z" >&2
+            exit 1
+          fi
+          printf '{"version":"%s","protocol_version":1}\n' "$VERSION" > agent-release.json
+          sha256sum agent-release.json > agent-release.json.sha256
       - name: Upload scripts
         uses: actions/upload-artifact@v4
         with:
@@ -106,6 +116,8 @@ jobs:
             dist/install.sh.sha256
             dist/uninstall.sh
             dist/uninstall.sh.sha256
+            dist/agent-release.json
+            dist/agent-release.json.sha256
           if-no-files-found: error
 
   release:
@@ -119,7 +131,7 @@ jobs:
       - name: Download binaries
         uses: actions/download-artifact@v5
         with:
-          pattern: wolnut-agent-linux-*
+          pattern: wolnut-agent-*
           path: dist
           merge-multiple: true
       - name: Publish release assets
@@ -135,3 +147,5 @@ jobs:
             dist/install.sh.sha256
             dist/uninstall.sh
             dist/uninstall.sh.sha256
+            dist/agent-release.json
+            dist/agent-release.json.sha256
