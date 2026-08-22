@@ -1680,9 +1680,9 @@ function ClientsTab({
               Install and pair {cfg.clients[installIndex].name}
             </h2>
             <p className="desc">
-              Generate a one-time command, then run it on the Linux device. It verifies the installer and agent
-              checksums, runs directly as root or uses sudo when available, installs the systemd service, and pairs
-              over HTTPS automatically.
+              Generate a short one-time command, then run it on the Linux device. It securely fetches the installer
+              from Wolnut, verifies the agent binary checksum, runs directly as root or uses sudo when available,
+              installs the systemd service, and pairs over HTTPS automatically.
             </p>
             <div className="field">
               <label>Agent port</label>
@@ -1718,7 +1718,7 @@ function ClientsTab({
                     className="install-command"
                     value={installCommand}
                     readOnly
-                    rows={8}
+                    rows={4}
                     spellCheck={false}
                   />
                 </div>
