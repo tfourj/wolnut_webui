@@ -107,6 +107,7 @@ class ShutdownModel(BaseModel):
     battery_percent: int = Field(default=20, ge=1, le=100)
     agent_id: Optional[str] = None
     agent_port: int = Field(default=8184, ge=1, le=65535)
+    auto_update: bool = False
 
 
 class ClientModel(BaseModel):
@@ -553,6 +554,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                 "battery_percent": 20,
                 "agent_id": None,
                 "agent_port": 8184,
+                "auto_update": False,
             }.items():
                 c["shutdown"].setdefault(key, value)
         return raw
@@ -687,6 +689,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                 "battery_percent": shutdown.get("battery_percent", 20),
                 "agent_id": shutdown.get("agent_id"),
                 "agent_port": shutdown.get("agent_port", 8184),
+                "auto_update": shutdown.get("auto_update", False),
             }
 
         def persist_config(current: dict) -> dict:
@@ -958,6 +961,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                         "battery_percent": shutdown.get("battery_percent", 20),
                         "agent_id": req.agent_id,
                         "agent_port": int(enrollment["agent_port"]),
+                        "auto_update": shutdown.get("auto_update", False),
                     }
                 )
                 validate_config(value)
@@ -1019,6 +1023,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                     "battery_percent": shutdown.get("battery_percent", 20),
                     "agent_id": result["agent_id"],
                     "agent_port": req.agent_port,
+                    "auto_update": shutdown.get("auto_update", False),
                 }
             )
             validate_config(value)

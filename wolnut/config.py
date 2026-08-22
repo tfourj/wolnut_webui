@@ -37,6 +37,7 @@ class ShutdownConfig:
     battery_percent: int = 20
     agent_id: str | None = None
     agent_port: int = 8184
+    auto_update: bool = False
 
 
 @dataclass
@@ -351,6 +352,10 @@ def validate_config(raw: dict):
             not isinstance(agent_id, str) or not agent_id.strip()
         ):
             raise ValueError(f"Client '{name}' has invalid shutdown agent ID")
+        if not isinstance(shutdown.get("auto_update", False), bool):
+            raise ValueError(
+                f"Client '{name}' has invalid 'shutdown.auto_update' (must be boolean)"
+            )
         if shutdown_enabled and not agent_id:
             raise ValueError(
                 f"Client '{name}' must be paired before automatic shutdown is enabled"

@@ -54,6 +54,7 @@ clients:
       battery_percent: 20            # Shut down at or below this UPS charge
       agent_id: null                 # Managed by the pairing flow
       agent_port: 8184
+      auto_update: false             # Install verified agent releases automatically
   - name: "client 2"
     host: hostname.local             # You can use a hostname if it resolves to a reachable interface
     mac: auto                        # MAC will be resolved using ARP at runtime

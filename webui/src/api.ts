@@ -28,6 +28,7 @@ export interface ShutdownConfig {
   battery_percent: number
   agent_id?: string | null
   agent_port: number
+  auto_update: boolean
 }
 
 export interface WebUIConfig {

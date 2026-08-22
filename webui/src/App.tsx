@@ -1080,7 +1080,13 @@ function ClientsTab({
           always_wake: false,
           enabled: true,
           wake_enabled: true,
-          shutdown: { enabled: false, battery_percent: 20, agent_id: null, agent_port: 8184 },
+          shutdown: {
+            enabled: false,
+            battery_percent: 20,
+            agent_id: null,
+            agent_port: 8184,
+            auto_update: false,
+          },
         },
       ],
     })

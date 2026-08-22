@@ -232,6 +232,7 @@ def test_shutdown_defaults_preserve_existing_clients(mocker, minimal_config_dict
     assert cfg.clients[0].shutdown.enabled is False
     assert cfg.clients[0].shutdown.battery_percent == 20
     assert cfg.clients[0].shutdown.agent_port == 8184
+    assert cfg.clients[0].shutdown.auto_update is False
 
 
 def test_shutdown_only_client_does_not_require_mac():
@@ -256,6 +257,7 @@ def test_shutdown_only_client_does_not_require_mac():
         ({"battery_percent": 0}, "between 1 and 100"),
         ({"battery_percent": 101}, "between 1 and 100"),
         ({"agent_port": 0}, "between 1 and 65535"),
+        ({"auto_update": "yes"}, "auto_update"),
         ({"enabled": True}, "must be paired"),
     ],
 )

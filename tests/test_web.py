@@ -240,6 +240,7 @@ def test_pair_agent_persists_server_owned_identity(tmp_path, monkeypatch, mocker
         "battery_percent": 20,
         "agent_id": "agent-123",
         "agent_port": 9191,
+        "auto_update": False,
     }
 
 

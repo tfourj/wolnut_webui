@@ -34,6 +34,7 @@ describe('secure shutdown UI guards', () => {
       battery_percent: 20,
       agent_id: null,
       agent_port: 8184,
+      auto_update: false,
     })
   })
 

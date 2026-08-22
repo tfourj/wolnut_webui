@@ -18,6 +18,7 @@ export function normalizeShutdownClient(client: ClientConfig): ClientConfig {
       battery_percent: 20,
       agent_id: null,
       agent_port: 8184,
+      auto_update: false,
       ...(client.shutdown || {}),
     },
   }
