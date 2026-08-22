@@ -1,4 +1,4 @@
-import type { ClientConfig } from './api'
+import type { AgentEnrollmentStatus, ClientConfig } from './api'
 
 export function isCertificateFingerprintValid(value: string): boolean {
   const normalized = value.replace(/[:\s-]/g, '')
@@ -21,4 +21,8 @@ export function normalizeShutdownClient(client: ClientConfig): ClientConfig {
       ...(client.shutdown || {}),
     },
   }
+}
+
+export function isEnrollmentTerminal(status: AgentEnrollmentStatus['status']): boolean {
+  return ['paired', 'failed', 'expired', 'superseded'].includes(status)
 }

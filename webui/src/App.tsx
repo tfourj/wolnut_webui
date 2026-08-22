@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import {
   clearToken,
+  createAgentEnrollment,
   fetchConfig,
   fetchStatus,
+  getAgentEnrollment,
   getAuthStatus,
   getMe,
   getToken,
@@ -17,11 +19,13 @@ import {
   testAgent,
   testNotification,
   unpairAgent,
+  AgentEnrollmentStatus,
   NotificationProvider,
   WolnutConfig,
 } from './api'
 import {
   isCertificateFingerprintValid,
+  isEnrollmentTerminal,
   isShutdownConfirmationValid,
   normalizeShutdownClient,
 } from './shutdownUi'
@@ -1039,6 +1043,11 @@ function ClientsTab({
   const [shutdownIndex, setShutdownIndex] = useState<number | null>(null)
   const [shutdownConfirmation, setShutdownConfirmation] = useState('')
   const [agentBusy, setAgentBusy] = useState(false)
+  const [installIndex, setInstallIndex] = useState<number | null>(null)
+  const [installCommand, setInstallCommand] = useState('')
+  const [enrollmentId, setEnrollmentId] = useState('')
+  const [enrollmentExpiresAt, setEnrollmentExpiresAt] = useState(0)
+  const [enrollmentStatus, setEnrollmentStatus] = useState<AgentEnrollmentStatus | null>(null)
   const updateClient = (idx: number, patch: Partial<WolnutConfig['clients'][number]>) => {
     const next = [...cfg.clients]
     next[idx] = { ...next[idx], ...patch }
@@ -1090,6 +1099,73 @@ function ClientsTab({
     setPairingCode('')
     setFingerprint('')
   }
+
+  const openQuickInstall = (idx: number) => {
+    setInstallIndex(idx)
+    setAgentPort(cfg.clients[idx].shutdown.agent_port || 8184)
+    setInstallCommand('')
+    setEnrollmentId('')
+    setEnrollmentExpiresAt(0)
+    setEnrollmentStatus(null)
+  }
+
+  const closeQuickInstall = () => {
+    setInstallIndex(null)
+    setInstallCommand('')
+    setEnrollmentId('')
+    setEnrollmentExpiresAt(0)
+    setEnrollmentStatus(null)
+  }
+
+  const generateInstallCommand = async () => {
+    if (installIndex === null) return
+    const client = cfg.clients[installIndex]
+    setAgentBusy(true)
+    try {
+      const enrollment = await createAgentEnrollment(client.name, agentPort)
+      setInstallCommand(enrollment.install_command)
+      setEnrollmentId(enrollment.enrollment_id)
+      setEnrollmentExpiresAt(enrollment.expires_at)
+      setEnrollmentStatus({
+        client_name: client.name,
+        agent_port: agentPort,
+        expires_at: enrollment.expires_at,
+        status: 'pending',
+      })
+    } catch (error: any) {
+      showToast(`Could not create install command: ${String(error.message || error)}`)
+    } finally {
+      setAgentBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!enrollmentId) return
+    let stopped = false
+    let timer: number | undefined
+    const poll = async () => {
+      try {
+        const result = await getAgentEnrollment(enrollmentId)
+        if (stopped) return
+        setEnrollmentStatus(result)
+        if (isEnrollmentTerminal(result.status)) {
+          if (result.status === 'paired') {
+            showToast(`Secure agent paired for ${result.client_name}`)
+            await reload()
+          }
+          return
+        }
+      } catch (error: any) {
+        if (!stopped) showToast(`Enrollment status failed: ${String(error.message || error)}`)
+      }
+      if (!stopped) timer = window.setTimeout(poll, 2000)
+    }
+    timer = window.setTimeout(poll, 1000)
+    return () => {
+      stopped = true
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [enrollmentId])
 
   const runPairing = async () => {
     if (pairingIndex === null) return
@@ -1384,13 +1460,22 @@ function ClientsTab({
 
               <div className="toolbar">
                 {!isPaired && (
-                  <button
-                    className="btn btn-ghost btn-small"
-                    disabled={isDirty || !shutdownAdminReady || agentBusy}
-                    onClick={() => openPairing(idx)}
-                  >
-                    Pair agent
-                  </button>
+                  <>
+                    <button
+                      className="btn btn-primary btn-small"
+                      disabled={isDirty || !shutdownAdminReady || agentBusy}
+                      onClick={() => openQuickInstall(idx)}
+                    >
+                      Quick install
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-small"
+                      disabled={isDirty || !shutdownAdminReady || agentBusy}
+                      onClick={() => openPairing(idx)}
+                    >
+                      Pair manually
+                    </button>
+                  </>
                 )}
                 {isPaired && (
                   <>
@@ -1437,6 +1522,110 @@ function ClientsTab({
           </div>
         )
       })}
+
+      {installIndex !== null && (
+        <div className="modal-backdrop" role="presentation">
+          <div
+            className="modal quick-install-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="install-agent-title"
+          >
+            <h2 id="install-agent-title">
+              Install and pair {cfg.clients[installIndex].name}
+            </h2>
+            <p className="desc">
+              Generate a one-time command, then run it as a normal user on the Linux device. It verifies the
+              downloaded checksum, asks for sudo, installs the systemd service, and pairs over HTTPS automatically.
+            </p>
+            <div className="field">
+              <label>Agent port</label>
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                value={agentPort}
+                disabled={!!installCommand}
+                onChange={event => setAgentPort(Number(event.target.value))}
+              />
+            </div>
+
+            {!installCommand && (
+              <button
+                className="btn btn-primary"
+                disabled={agentBusy || agentPort < 1 || agentPort > 65535}
+                onClick={generateInstallCommand}
+              >
+                {agentBusy ? 'Generating...' : 'Generate one-time command'}
+              </button>
+            )}
+
+            {installCommand && (
+              <>
+                <div className="enrollment-warning">
+                  This command contains a single-use secret and expires at{' '}
+                  {new Date(enrollmentExpiresAt * 1000).toLocaleTimeString()}. Do not share or save it.
+                </div>
+                <div className="field">
+                  <label>Run on {cfg.clients[installIndex].host}</label>
+                  <textarea
+                    className="install-command"
+                    value={installCommand}
+                    readOnly
+                    rows={8}
+                    spellCheck={false}
+                  />
+                </div>
+                <div className="enrollment-status" aria-live="polite">
+                  <span className={`badge ${enrollmentStatus?.status === 'paired' ? 'online' : ''}`}>
+                    {enrollmentStatus?.status || 'pending'}
+                  </span>
+                  {enrollmentStatus?.status === 'pending' && ' Waiting for the device to run the command.'}
+                  {enrollmentStatus?.status === 'processing' && ' Device connected; issuing certificates.'}
+                  {enrollmentStatus?.status === 'paired' && ' Agent installed and pairing accepted.'}
+                  {enrollmentStatus?.last_error && ` ${enrollmentStatus.last_error}`}
+                </div>
+                <div className="toolbar">
+                  <button
+                    className="btn btn-primary"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(installCommand)
+                        showToast('Install command copied')
+                      } catch {
+                        showToast('Could not copy automatically; select the command manually')
+                      }
+                    }}
+                  >
+                    Copy command
+                  </button>
+                  {enrollmentStatus
+                    && isEnrollmentTerminal(enrollmentStatus.status)
+                    && enrollmentStatus.status !== 'paired' && (
+                    <button
+                      className="btn btn-ghost"
+                      disabled={agentBusy}
+                      onClick={() => {
+                        setInstallCommand('')
+                        setEnrollmentId('')
+                        setEnrollmentStatus(null)
+                      }}
+                    >
+                      Generate another
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+
+            <div className="toolbar modal-actions">
+              <button className="btn btn-ghost" onClick={closeQuickInstall} disabled={agentBusy}>
+                {enrollmentStatus?.status === 'paired' ? 'Done' : 'Close'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {pairingIndex !== null && (
         <div className="modal-backdrop" role="presentation">

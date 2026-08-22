@@ -234,6 +234,37 @@ export function pairAgent(
   })
 }
 
+export interface AgentEnrollment {
+  enrollment_id: string
+  expires_at: number
+  install_command: string
+}
+
+export interface AgentEnrollmentStatus {
+  client_name: string
+  agent_port: number
+  expires_at: number
+  status: 'pending' | 'processing' | 'paired' | 'failed' | 'expired' | 'superseded'
+  agent_id?: string | null
+  last_error?: string | null
+}
+
+export function createAgentEnrollment(clientName: string, agentPort: number) {
+  return agentRequest('/api/agents/enrollments', {
+    client_name: clientName,
+    agent_port: agentPort,
+  }) as Promise<AgentEnrollment>
+}
+
+export async function getAgentEnrollment(enrollmentId: string) {
+  const res = await authFetch(`/api/agents/enrollments/${encodeURIComponent(enrollmentId)}`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new Error(body?.detail || 'Could not read enrollment status')
+  }
+  return res.json() as Promise<AgentEnrollmentStatus>
+}
+
 export function testAgent(clientName: string) {
   return agentRequest(`/api/agents/${encodeURIComponent(clientName)}/test`)
 }

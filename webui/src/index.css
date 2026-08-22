@@ -330,6 +330,36 @@ a:hover { text-decoration: underline; }
 
 .modal h2 { margin: 0 0 6px; }
 .modal-actions { justify-content: flex-end; }
+
+.quick-install-modal { width: min(760px, 100%); }
+
+.install-command {
+  min-height: 180px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.enrollment-warning {
+  margin: 14px 0;
+  padding: 10px 12px;
+  border: 1px solid #6b4f13;
+  border-radius: 8px;
+  background: #2a2015;
+  color: var(--warning);
+  font-size: 12px;
+}
+
+.enrollment-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .status-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

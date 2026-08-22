@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   isCertificateFingerprintValid,
+  isEnrollmentTerminal,
   isShutdownConfirmationValid,
   normalizeShutdownClient,
 } from './shutdownUi'
@@ -34,5 +35,13 @@ describe('secure shutdown UI guards', () => {
       agent_id: null,
       agent_port: 8184,
     })
+  })
+
+  it('keeps polling only while one-line enrollment can still progress', () => {
+    expect(isEnrollmentTerminal('pending')).toBe(false)
+    expect(isEnrollmentTerminal('processing')).toBe(false)
+    expect(isEnrollmentTerminal('paired')).toBe(true)
+    expect(isEnrollmentTerminal('failed')).toBe(true)
+    expect(isEnrollmentTerminal('expired')).toBe(true)
   })
 })
