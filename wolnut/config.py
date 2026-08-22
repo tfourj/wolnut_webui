@@ -85,6 +85,8 @@ class NotificationEventsConfig:
     wake_sent: bool = True
     client_recovered: bool = True
     errors: bool = True
+    shutdown_acknowledged: bool = True
+    shutdown_failed: bool = True
 
 
 @dataclass

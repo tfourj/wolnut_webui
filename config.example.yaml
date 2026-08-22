@@ -39,6 +39,8 @@ notifications:
     wake_sent: true
     client_recovered: true
     errors: true
+    shutdown_acknowledged: true
+    shutdown_failed: true
 
 clients:
   - name: "client 1"                  # Human-readable name

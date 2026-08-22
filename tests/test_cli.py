@@ -10,6 +10,12 @@ def runner():
     return CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def disable_web_server(monkeypatch):
+    """CLI unit tests exercise argument handling without binding a real WebUI port."""
+    monkeypatch.setenv("WOLNUT_WEB_ENABLED", "false")
+
+
 def test_get_battery_percent():
     """Tests the battery percentage parsing function."""
     assert get_battery_percent({"battery.charge": "95.5"}) == 96

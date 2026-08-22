@@ -8,6 +8,7 @@ from wolnut.state import ClientStateTracker
 from wolnut.monitor import get_ups_status, is_client_online
 from wolnut.notifications import NotificationService
 from wolnut.wol import send_wol_packet
+from wolnut.shutdown import ShutdownCoordinator, parse_ups_snapshot
 
 logger = logging.getLogger("wolnut")
 
@@ -57,13 +58,17 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
     state_tracker = ClientStateTracker(config.clients, status_file=config.status_file)
     if state_tracker.was_ups_on_battery():
         logger.info("WOLNUT is resuming from a UPS battery event")
-        restoration_event = True
-        state_tracker.reset()
+        on_battery = True
+    shutdown_coordinator = ShutdownCoordinator()
 
     ups_status = get_ups_status(config.nut.ups, username=config.nut.username, password=config.nut.password, port=config.nut.port, timeout=config.nut.timeout)
-    battery_percent = get_battery_percent(ups_status)
-    power_status = ups_status.get("ups.status", "OL")
-    logger.info("UPS power status: %s, Battery: %s%%", power_status, battery_percent)
+    snapshot = parse_ups_snapshot(ups_status)
+    if snapshot:
+        battery_percent = snapshot.battery_percent
+        power_status = snapshot.mode
+        logger.info("UPS power status: %s, Battery: %s%%", power_status, battery_percent)
+    else:
+        logger.warning("UPS status is incomplete; shutdown and restoration actions are paused")
 
     while True:
         # Hot-reload config if file changed (WebUI save)
@@ -99,8 +104,16 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
             logger.warning("Error checking/reloading config: %s", e)
 
         ups_status = get_ups_status(config.nut.ups, username=config.nut.username, password=config.nut.password, port=config.nut.port, timeout=config.nut.timeout)
-        battery_percent = get_battery_percent(ups_status)
-        power_status = ups_status.get("ups.status", "OL")
+        snapshot = parse_ups_snapshot(ups_status)
+        if snapshot is None:
+            logger.warning(
+                "UPS status is incomplete; shutdown and restoration actions are paused"
+            )
+            state_tracker.save_state()
+            time.sleep(config.poll_interval)
+            continue
+        battery_percent = snapshot.battery_percent
+        power_status = snapshot.mode
 
         logger.debug(
             "UPS power status: %s, Battery: %s%%", power_status, battery_percent
@@ -114,19 +127,30 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
             state_tracker.update(client.name, online)
 
         # Power Loss Event
-        if "OB" in power_status and not on_battery:
-            state_tracker.mark_all_online_clients()
-            state_tracker.set_ups_on_battery(True, battery_percent)
+        if power_status == "OB":
+            if not on_battery:
+                state_tracker.mark_all_online_clients()
+                state_tracker.begin_outage(battery_percent)
+                logger.warning("UPS switched to battery power.")
+                notifications.send(
+                    "power_loss",
+                    "UPS switched to battery power",
+                    f"Battery charge is {battery_percent}%.",
+                )
+            else:
+                state_tracker.begin_outage(battery_percent)
             on_battery = True
-            logger.warning("UPS switched to battery power.")
-            notifications.send(
-                "power_loss",
-                "UPS switched to battery power",
-                f"Battery charge is {battery_percent}%.",
+            restoration_event = False
+            restoration_event_start = None
+            shutdown_coordinator.process_on_battery(
+                config,
+                state_tracker,
+                notifications,
+                battery_percent,
             )
 
         # Power Restoration Event
-        elif ("OL" in power_status and on_battery) or restoration_event:
+        elif power_status == "OL" and (on_battery or restoration_event):
             on_battery = False
             restoration_event = True
 
@@ -167,6 +191,10 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
 
                 for client in config.clients:
                     if not getattr(client, "enabled", True):
+                        continue
+
+                    if not getattr(client, "wake_enabled", True):
+                        state_tracker.mark_skip(client.name)
                         continue
 
                     if state_tracker.should_skip(client.name):
@@ -259,7 +287,7 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
                     else:
                         pass
 
-        elif not on_battery and not restoration_event:
+        elif power_status == "OL" and not on_battery and not restoration_event:
             state_tracker.reset()
             state_tracker.set_ups_on_battery(False)
             recorded_down_clients.clear()
@@ -268,10 +296,7 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
 
         state_tracker.save_state()
 
-        if not on_battery:
-            time.sleep(config.poll_interval)
-        else:
-            time.sleep(2)
+        time.sleep(config.poll_interval)
 
 
 @click.command()
@@ -449,6 +474,8 @@ def _create_default_config(config_path: str, status_file: str | None = None) -> 
                 "wake_sent": True,
                 "client_recovered": True,
                 "errors": True,
+                "shutdown_acknowledged": True,
+                "shutdown_failed": True,
             },
         },
     }

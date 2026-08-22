@@ -143,6 +143,8 @@ class NotificationEventsModel(BaseModel):
     wake_sent: bool = True
     client_recovered: bool = True
     errors: bool = True
+    shutdown_acknowledged: bool = True
+    shutdown_failed: bool = True
 
 
 class NotificationsConfigModel(BaseModel):
@@ -362,6 +364,8 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                         "wake_sent": True,
                         "client_recovered": True,
                         "errors": True,
+                        "shutdown_acknowledged": True,
+                        "shutdown_failed": True,
                     },
                 },
             }
@@ -410,6 +414,8 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             "wake_sent",
             "client_recovered",
             "errors",
+            "shutdown_acknowledged",
+            "shutdown_failed",
         ):
             raw["notifications"]["events"].setdefault(key, True)
         for c in raw.get("clients", []) or []:
@@ -733,6 +739,11 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                 ups=raw.get("nut", {}).get("ups", ""),
             )
         except AgentError as error:
+            _notifications_from_raw(raw).send(
+                "shutdown_failed",
+                "Device shutdown delivery failed",
+                f"Wolnut could not reach {client_name}: {error}",
+            )
             _record_agent_result(
                 client_name,
                 status="failed",
@@ -746,6 +757,11 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             status="accepted",
             source="manual",
             command_id=command_id,
+        )
+        _notifications_from_raw(raw).send(
+            "shutdown_acknowledged",
+            "Device shutdown accepted",
+            f"{client_name} accepted a manual shutdown request from {user}.",
         )
         logger.warning("Manual shutdown accepted for %s by %s", client_name, user)
         return result
