@@ -1,5 +1,6 @@
 import os
 import hashlib
+import threading
 
 import pytest
 
@@ -47,6 +48,24 @@ def test_controller_identity_is_persistent_and_private(tmp_path):
     assert (os.stat(security.directory).st_mode & 0o777) == 0o700
     for path in (first.ca_cert, first.client_cert, first.client_key):
         assert (os.stat(path).st_mode & 0o777) == 0o600
+
+
+def test_concurrent_controller_identity_creation_is_consistent(tmp_path):
+    security = SecurityStore(tmp_path / "security")
+    certificates = []
+
+    def create_identity():
+        identity = security.ensure_controller_identity()
+        certificates.append(identity.client_cert.read_bytes())
+
+    threads = [threading.Thread(target=create_identity) for _ in range(20)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(certificates) == 20
+    assert len(set(certificates)) == 1
 
 
 def test_incomplete_controller_identity_is_rejected(tmp_path):

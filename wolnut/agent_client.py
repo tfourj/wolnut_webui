@@ -4,6 +4,7 @@ import json
 import os
 import ssl
 import tempfile
+import threading
 import time
 
 from dataclasses import dataclass
@@ -46,6 +47,7 @@ class SecurityStore:
         self.directory = Path(
             directory or os.getenv("WOLNUT_SECURITY_DIR", "/config/security")
         )
+        self._lock = threading.RLock()
 
     def _write_private(self, path: Path, data: bytes) -> None:
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -67,6 +69,10 @@ class SecurityStore:
             raise
 
     def ensure_controller_identity(self) -> ControllerIdentity:
+        with self._lock:
+            return self._ensure_controller_identity()
+
+    def _ensure_controller_identity(self) -> ControllerIdentity:
         ca_key_path = self.directory / "controller-ca.key"
         ca_cert_path = self.directory / "controller-ca.crt"
         client_key_path = self.directory / "controller-client.key"
