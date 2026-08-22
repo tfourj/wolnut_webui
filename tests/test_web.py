@@ -267,6 +267,8 @@ def test_one_line_enrollment_installs_and_pairs_agent(tmp_path, monkeypatch):
     command = payload["install_command"]
     assert "sha256sum -c" in command
     assert "curl |" not in command
+    assert "SCRIPT=install.sh" in command
+    assert "sudo" not in command
     assert "--enroll-url https://wolnut.example/api/agents/enroll" in command
     arguments = shlex.split(command)
     token = arguments[arguments.index("--enrollment-token") + 1]
@@ -292,6 +294,34 @@ def test_one_line_enrollment_installs_and_pairs_agent(tmp_path, monkeypatch):
     status = client.get(f"/api/agents/enrollments/{payload['enrollment_id']}").json()
     assert status["status"] == "paired"
     assert "token_hash" not in status
+
+
+def test_manual_install_commands_use_verified_lifecycle_scripts(tmp_path, monkeypatch):
+    config = {
+        "nut": {"ups": "ups@localhost"},
+        "clients": [
+            {
+                "name": "server",
+                "host": "server.local",
+                "mac": "00:11:22:33:44:55",
+            }
+        ],
+    }
+    client, _ = _secure_app_client(tmp_path, monkeypatch, config)
+
+    response = client.post(
+        "/api/agents/manual-install",
+        json={"client_name": "server", "agent_port": 9191},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert "SCRIPT=install.sh" in result["install_command"]
+    assert "--listen 0.0.0.0:9191" in result["install_command"]
+    assert "--enrollment-token" not in result["install_command"]
+    assert "wolnut-agent pairing-code" in result["pairing_command"]
+    assert "SCRIPT=uninstall.sh" in result["uninstall_command"]
+    assert "sha256sum -c" in result["uninstall_command"]
 
 
 def test_one_line_enrollment_requires_https(tmp_path, monkeypatch):

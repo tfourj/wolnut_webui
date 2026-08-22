@@ -212,7 +212,7 @@ class AgentEnrollmentCompleteRequest(BaseModel):
     version: str = Field(default="", max_length=64)
 
 
-def build_agent_install_command(public_url: str, token: str, agent_port: int) -> str:
+def _agent_download_base() -> str:
     download_base = os.getenv(
         "WOLNUT_AGENT_DOWNLOAD_BASE_URL",
         "https://github.com/tfourj/wolnut_webui/releases/latest/download",
@@ -226,27 +226,63 @@ def build_agent_install_command(public_url: str, token: str, agent_port: int) ->
         or parsed_download.fragment
     ):
         raise ValueError("WOLNUT_AGENT_DOWNLOAD_BASE_URL must use HTTPS")
-    enrollment_url = public_url.rstrip("/") + "/api/agents/enroll"
+    return download_base
+
+
+def _agent_script_command(script_name: str, arguments: list[str]) -> str:
+    download_base = _agent_download_base()
     quoted_base = shlex.quote(download_base)
-    quoted_enrollment = shlex.quote(enrollment_url)
-    quoted_token = shlex.quote(token)
-    listen = shlex.quote(f"0.0.0.0:{agent_port}")
+    quoted_script = shlex.quote(script_name)
+    quoted_arguments = " ".join(shlex.quote(value) for value in arguments)
     return (
         'TMP="$(mktemp -d)" && trap \'rm -rf "$TMP"\' EXIT && '
-        'ARCH="$(uname -m)" && case "$ARCH" in '
-        "x86_64) ARCH=amd64 ;; aarch64|arm64) ARCH=arm64 ;; "
-        '*) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;; esac && '
-        f"BASE={quoted_base} && "
-        'BIN="wolnut-agent-linux-$ARCH" && '
+        f"BASE={quoted_base} && SCRIPT={quoted_script} && "
         'curl --proto "=https" --proto-redir "=https" --tlsv1.2 -fsSL '
-        '"$BASE/$BIN" -o "$TMP/$BIN" && '
+        '"$BASE/$SCRIPT" -o "$TMP/$SCRIPT" && '
         'curl --proto "=https" --proto-redir "=https" --tlsv1.2 -fsSL '
-        '"$BASE/$BIN.sha256" -o "$TMP/$BIN.sha256" && '
-        '(cd "$TMP" && sha256sum -c "$BIN.sha256") && '
-        'chmod 0755 "$TMP/$BIN" && '
-        f'sudo "$TMP/$BIN" install-service --listen {listen} '
-        f"--enroll-url {quoted_enrollment} --enrollment-token {quoted_token}"
+        '"$BASE/$SCRIPT.sha256" -o "$TMP/$SCRIPT.sha256" && '
+        '(cd "$TMP" && sha256sum -c "$SCRIPT.sha256") && '
+        f'/bin/sh "$TMP/$SCRIPT" {quoted_arguments}'
+    ).rstrip()
+
+
+def build_agent_install_command(public_url: str, token: str, agent_port: int) -> str:
+    download_base = _agent_download_base()
+    enrollment_url = public_url.rstrip("/") + "/api/agents/enroll"
+    return _agent_script_command(
+        "install.sh",
+        [
+            "--download-base",
+            download_base,
+            "--listen",
+            f"0.0.0.0:{agent_port}",
+            "--enroll-url",
+            enrollment_url,
+            "--enrollment-token",
+            token,
+        ],
     )
+
+
+def build_agent_manual_commands(agent_port: int) -> dict[str, str]:
+    download_base = _agent_download_base()
+    return {
+        "install_command": _agent_script_command(
+            "install.sh",
+            [
+                "--download-base",
+                download_base,
+                "--listen",
+                f"0.0.0.0:{agent_port}",
+            ],
+        ),
+        "pairing_command": (
+            'if [ "$(id -u)" -eq 0 ]; then wolnut-agent pairing-code; '
+            "elif command -v sudo >/dev/null 2>&1; then sudo wolnut-agent pairing-code; "
+            "else echo 'Log in as root and run: wolnut-agent pairing-code'; fi"
+        ),
+        "uninstall_command": _agent_script_command("uninstall.sh", []),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -817,6 +853,19 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             "config_path": cfg_path,
             "status_path": st_path,
         }
+
+    @app.post("/api/agents/manual-install")
+    def create_manual_agent_install(
+        req: AgentEnrollmentRequest,
+        request: Request,
+        user: str = Depends(require_auth),
+    ):
+        _require_secure_admin(request)
+        _find_client(_read_config_or_default(), req.client_name)
+        try:
+            return build_agent_manual_commands(req.agent_port)
+        except ValueError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
 
     @app.post("/api/agents/enrollments")
     def create_agent_enrollment(
