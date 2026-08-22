@@ -1089,7 +1089,11 @@ WantedBy=multi-user.target
 	if err := os.WriteFile("/etc/systemd/system/wolnut-agent.service", []byte(unit), 0o644); err != nil {
 		return err
 	}
-	for _, args := range [][]string{{"daemon-reload"}, {"enable", "--now", "wolnut-agent.service"}} {
+	for _, args := range [][]string{
+		{"daemon-reload"},
+		{"enable", "wolnut-agent.service"},
+		{"restart", "wolnut-agent.service"},
+	} {
 		if output, err := exec.Command("/usr/bin/systemctl", args...).CombinedOutput(); err != nil {
 			return fmt.Errorf("systemctl %s failed: %s", strings.Join(args, " "), strings.TrimSpace(string(output)))
 		}
