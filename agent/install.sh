@@ -116,18 +116,21 @@ run_install() {
         if [ -n "$privilege_command" ]; then
             "$privilege_command" "$binary_path" install-service \
                 --listen "$listen_address" \
+                --download-base "$download_base" \
                 --enroll-url "$enrollment_url" \
                 --enrollment-token "$enrollment_token"
         else
             "$binary_path" install-service \
                 --listen "$listen_address" \
+                --download-base "$download_base" \
                 --enroll-url "$enrollment_url" \
                 --enrollment-token "$enrollment_token"
         fi
     elif [ -n "$privilege_command" ]; then
-        "$privilege_command" "$binary_path" install-service --listen "$listen_address"
+        "$privilege_command" "$binary_path" install-service \
+            --listen "$listen_address" --download-base "$download_base"
     else
-        "$binary_path" install-service --listen "$listen_address"
+        "$binary_path" install-service --listen "$listen_address" --download-base "$download_base"
     fi
 }
 

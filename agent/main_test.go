@@ -5,12 +5,14 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -29,6 +31,23 @@ type fakePoweroff struct{ calls atomic.Int32 }
 
 func (f *fakePoweroff) Poweroff() error {
 	f.calls.Add(1)
+	return nil
+}
+
+type fakeUpdater struct {
+	calls    atomic.Int32
+	restarts atomic.Int32
+	result   updateResult
+	err      error
+}
+
+func (f *fakeUpdater) Install(string) (updateResult, error) {
+	f.calls.Add(1)
+	return f.result, f.err
+}
+
+func (f *fakeUpdater) Restart() error {
+	f.restarts.Add(1)
 	return nil
 }
 
@@ -279,6 +298,163 @@ func TestUnpairClearsEnrollmentAndLedger(t *testing.T) {
 	if state.ControllerCAPEM != "" || state.ServerCertPEM != "" || len(state.Processed) != 0 {
 		t.Fatal("unpair did not clear enrollment state")
 	}
+}
+
+func TestUpdatePolicyIsPersistedAndStartsCheck(t *testing.T) {
+	s := &store{dir: t.TempDir()}
+	if _, err := s.initialize(); err != nil {
+		t.Fatal(err)
+	}
+	updater := &fakeUpdater{result: updateResult{Status: "up_to_date", LatestVersion: "1.2.3"}}
+	service := &server{store: s, updater: updater}
+	request := httptest.NewRequest(http.MethodPost, "/v1/update-policy", strings.NewReader(`{"enabled":true}`))
+	response := httptest.NewRecorder()
+
+	service.handleUpdatePolicy(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("unexpected response %d: %s", response.Code, response.Body.String())
+	}
+	deadline := time.Now().Add(time.Second)
+	for updater.calls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	state, err := s.load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.AutoUpdate || updater.calls.Load() != 1 || state.UpdateStatus != "up_to_date" {
+		t.Fatalf("update policy was not applied: %+v, calls=%d", state, updater.calls.Load())
+	}
+}
+
+func TestManualUpdateHandlerSchedulesOnlyOneCheck(t *testing.T) {
+	s := &store{dir: t.TempDir()}
+	if _, err := s.initialize(); err != nil {
+		t.Fatal(err)
+	}
+	updater := &fakeUpdater{result: updateResult{Status: "up_to_date", LatestVersion: "1.2.3"}}
+	service := &server{store: s, updater: updater}
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/update", strings.NewReader(`{}`))
+	response := httptest.NewRecorder()
+	service.handleUpdate(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("unexpected response %d: %s", response.Code, response.Body.String())
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for updater.calls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if updater.calls.Load() != 1 {
+		t.Fatalf("expected one update check, got %d", updater.calls.Load())
+	}
+}
+
+func TestReleaseUpdaterVerifiesAndInstallsOwnBinary(t *testing.T) {
+	manifest := []byte(`{"version":"1.2.0","protocol_version":1}`)
+	binary := []byte("test-agent-binary")
+	assets := map[string][]byte{
+		manifestName:                      manifest,
+		manifestName + ".sha256":          checksumLine(manifestName, manifest),
+		"wolnut-agent-linux-amd64":        binary,
+		"wolnut-agent-linux-amd64.sha256": checksumLine("wolnut-agent-linux-amd64", binary),
+	}
+	release := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, ok := assets[strings.TrimPrefix(r.URL.Path, "/")]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	defer release.Close()
+
+	binaryPath := filepath.Join(t.TempDir(), "wolnut-agent")
+	var invokedPath string
+	var invokedArguments []string
+	updater := &releaseUpdater{
+		downloadBase: release.URL,
+		binaryPath:   binaryPath,
+		client:       release.Client(),
+		architecture: "amd64",
+		run: func(name string, args ...string) error {
+			invokedPath = name
+			invokedArguments = append([]string(nil), args...)
+			return nil
+		},
+	}
+
+	result, err := updater.Install("1.1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	installed, err := os.ReadFile(binaryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "restart_pending" || result.LatestVersion != "1.2.0" {
+		t.Fatalf("unexpected update result: %+v", result)
+	}
+	if string(installed) != string(binary) {
+		t.Fatal("installed binary does not match verified asset")
+	}
+	if filepath.Dir(invokedPath) != filepath.Dir(binaryPath) || len(invokedArguments) != 1 || invokedArguments[0] != "version" {
+		t.Fatalf("unexpected verification invocation: %q %q", invokedPath, invokedArguments)
+	}
+}
+
+func TestReleaseUpdaterRejectsChecksumMismatch(t *testing.T) {
+	manifest := []byte(`{"version":"1.2.0","protocol_version":1}`)
+	release := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch strings.TrimPrefix(r.URL.Path, "/") {
+		case manifestName:
+			_, _ = w.Write(manifest)
+		case manifestName + ".sha256":
+			_, _ = fmt.Fprintf(w, "%064d  %s\n", 0, manifestName)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer release.Close()
+	updater := &releaseUpdater{downloadBase: release.URL, client: release.Client(), architecture: "amd64"}
+
+	if _, err := updater.Install("1.1.0"); err == nil || !strings.Contains(err.Error(), "checksum") {
+		t.Fatalf("checksum mismatch was not rejected: %v", err)
+	}
+}
+
+func TestVersionComparisonRejectsDowngradesAndUnstableValues(t *testing.T) {
+	newer, err := newerVersion("1.2.3", "1.2.2")
+	if err != nil || newer {
+		t.Fatalf("downgrade comparison failed: newer=%v err=%v", newer, err)
+	}
+	if _, err := newerVersion("dev", "1.2.3"); err == nil {
+		t.Fatal("unstable current version was accepted for automatic updates")
+	}
+}
+
+func TestReleaseUpdaterRestartUsesStaticInvocation(t *testing.T) {
+	var executable string
+	var arguments []string
+	updater := &releaseUpdater{run: func(name string, args ...string) error {
+		executable = name
+		arguments = append([]string(nil), args...)
+		return nil
+	}}
+
+	if err := updater.Restart(); err != nil {
+		t.Fatal(err)
+	}
+	if executable != "/usr/bin/systemctl" || strings.Join(arguments, " ") != "restart wolnut-agent.service" {
+		t.Fatalf("unexpected restart invocation: %q %q", executable, arguments)
+	}
+}
+
+func checksumLine(name string, data []byte) []byte {
+	digest := sha256.Sum256(data)
+	return []byte(fmt.Sprintf("%x  %s\n", digest, name))
 }
 
 func TestListenAddressValidation(t *testing.T) {

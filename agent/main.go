@@ -57,6 +57,12 @@ type persistedState struct {
 	CompletionTokenHash string               `json:"completion_token_hash,omitempty"`
 	CompletionExpiresAt int64                `json:"completion_expires_at,omitempty"`
 	Processed           map[string]processed `json:"processed,omitempty"`
+	AutoUpdate          bool                 `json:"auto_update"`
+	UpdateStatus        string               `json:"update_status,omitempty"`
+	LatestVersion       string               `json:"latest_version,omitempty"`
+	LastUpdateError     string               `json:"last_update_error,omitempty"`
+	UpdateCheckedAt     int64                `json:"update_checked_at,omitempty"`
+	UpdateInstalledAt   int64                `json:"update_installed_at,omitempty"`
 }
 
 type processed struct {
@@ -244,6 +250,9 @@ type server struct {
 	store         *store
 	poweroff      poweroffExecutor
 	shutdownDelay time.Duration
+	updater       updateExecutor
+	updateMu      sync.Mutex
+	updateRunning bool
 }
 
 func (s *server) routes() http.Handler {
@@ -252,6 +261,8 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("/bootstrap/complete", s.handleBootstrapComplete)
 	mux.HandleFunc("/v1/status", s.requireController(s.handleStatus))
 	mux.HandleFunc("/v1/shutdown", s.requireController(s.handleShutdown))
+	mux.HandleFunc("/v1/update", s.requireController(s.handleUpdate))
+	mux.HandleFunc("/v1/update-policy", s.requireController(s.handleUpdatePolicy))
 	mux.HandleFunc("/v1/unpair", s.requireController(s.handleUnpair))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -481,7 +492,130 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"version":                version,
 		"paired":                 true,
 		"certificate_expires_at": certificateExpiresAt,
+		"auto_update":            state.AutoUpdate,
+		"update_status":          state.UpdateStatus,
+		"latest_version":         state.LatestVersion,
+		"last_update_error":      state.LastUpdateError,
+		"update_checked_at":      state.UpdateCheckedAt,
+		"update_installed_at":    state.UpdateInstalledAt,
 	})
+}
+
+type updatePolicyRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+func (s *server) handleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var request updatePolicyRequest
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	state, err := s.store.load()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "state unavailable")
+		return
+	}
+	state.AutoUpdate = request.Enabled
+	if err := s.store.save(state); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not save update policy")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "configured", "auto_update": request.Enabled})
+	if request.Enabled {
+		s.startUpdate()
+	}
+}
+
+func (s *server) handleUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var request struct{}
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	if !s.startUpdate() {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "agent update is already running"})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "checking"})
+}
+
+func (s *server) startUpdate() bool {
+	s.updateMu.Lock()
+	if s.updateRunning || s.updater == nil {
+		s.updateMu.Unlock()
+		return false
+	}
+	s.updateRunning = true
+	s.updateMu.Unlock()
+
+	state, err := s.store.load()
+	if err != nil {
+		s.finishUpdate()
+		return false
+	}
+	state.UpdateStatus = "checking"
+	state.LastUpdateError = ""
+	state.UpdateCheckedAt = time.Now().Unix()
+	if err := s.store.save(state); err != nil {
+		s.finishUpdate()
+		return false
+	}
+	go func() {
+		result, updateErr := s.updater.Install(version)
+		state, loadErr := s.store.load()
+		if loadErr == nil {
+			if updateErr != nil {
+				state.UpdateStatus = "failed"
+				state.LastUpdateError = updateErr.Error()
+			} else {
+				state.UpdateStatus = result.Status
+				state.LatestVersion = result.LatestVersion
+				state.LastUpdateError = ""
+				if result.Status == "restart_pending" {
+					state.UpdateInstalledAt = time.Now().Unix()
+				}
+			}
+			_ = s.store.save(state)
+		}
+		if updateErr == nil && result.Status == "restart_pending" {
+			if restartErr := s.updater.Restart(); restartErr != nil {
+				if current, err := s.store.load(); err == nil {
+					current.UpdateStatus = "failed"
+					current.LastUpdateError = "could not restart agent service"
+					_ = s.store.save(current)
+				}
+			}
+		}
+		s.finishUpdate()
+	}()
+	return true
+}
+
+func (s *server) finishUpdate() {
+	s.updateMu.Lock()
+	s.updateRunning = false
+	s.updateMu.Unlock()
+}
+
+func (s *server) runAutoUpdates() {
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+	time.Sleep(time.Minute)
+	for {
+		state, err := s.store.load()
+		if err != nil || !state.AutoUpdate {
+			return
+		}
+		s.startUpdate()
+		<-ticker.C
+	}
 }
 
 type shutdownRequest struct {
@@ -581,6 +715,12 @@ func (s *server) handleUnpair(w http.ResponseWriter, r *http.Request) {
 	state.CompletionTokenHash = ""
 	state.CompletionExpiresAt = 0
 	state.Processed = map[string]processed{}
+	state.AutoUpdate = false
+	state.UpdateStatus = ""
+	state.LatestVersion = ""
+	state.LastUpdateError = ""
+	state.UpdateCheckedAt = 0
+	state.UpdateInstalledAt = 0
 	if err := s.store.save(state); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not reset pairing")
 		return
@@ -701,6 +841,12 @@ func resetPairing(stateStore *store, confirmed bool) error {
 	state.CompletionTokenHash = ""
 	state.CompletionExpiresAt = 0
 	state.Processed = map[string]processed{}
+	state.AutoUpdate = false
+	state.UpdateStatus = ""
+	state.LatestVersion = ""
+	state.LastUpdateError = ""
+	state.UpdateCheckedAt = 0
+	state.UpdateInstalledAt = 0
 	return stateStore.save(state)
 }
 
@@ -851,11 +997,15 @@ func validateListenAddress(listen string) error {
 	return nil
 }
 
-func installService(listen, enrollmentURL, enrollmentToken string) error {
+func installService(listen, downloadBase, enrollmentURL, enrollmentToken string) error {
 	if os.Geteuid() != 0 {
 		return errors.New("install-service must run as root")
 	}
 	if err := validateListenAddress(listen); err != nil {
+		return err
+	}
+	downloadBase, err := validateDownloadBase(downloadBase)
+	if err != nil {
 		return err
 	}
 	if (enrollmentURL == "") != (enrollmentToken == "") {
@@ -865,7 +1015,13 @@ func installService(listen, enrollmentURL, enrollmentToken string) error {
 	if err != nil {
 		return err
 	}
-	binaryPath := "/usr/local/bin/wolnut-agent"
+	if err := os.MkdirAll(defaultStateDir, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(defaultStateDir, 0o700); err != nil {
+		return err
+	}
+	binaryPath := filepath.Join(defaultStateDir, "wolnut-agent")
 	data, err := os.ReadFile(executable)
 	if err != nil {
 		return err
@@ -876,10 +1032,11 @@ func installService(listen, enrollmentURL, enrollmentToken string) error {
 	if err := os.Chmod(binaryPath, 0o755); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(defaultStateDir, 0o700); err != nil {
+	commandPath := "/usr/local/bin/wolnut-agent"
+	if err := os.Remove(commandPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := os.Chmod(defaultStateDir, 0o700); err != nil {
+	if err := os.Symlink(binaryPath, commandPath); err != nil {
 		return err
 	}
 	if enrollmentURL != "" {
@@ -896,7 +1053,9 @@ func installService(listen, enrollmentURL, enrollmentToken string) error {
 		return err
 	}
 	configPath := filepath.Join(defaultConfigDir, "agent.env")
-	if err := os.WriteFile(configPath, []byte("WOLNUT_AGENT_LISTEN="+listen+"\n"), 0o640); err != nil {
+	config := "WOLNUT_AGENT_LISTEN=" + listen + "\n" +
+		"WOLNUT_AGENT_DOWNLOAD_BASE_URL=" + downloadBase + "\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o640); err != nil {
 		return err
 	}
 	if err := os.Chmod(configPath, 0o640); err != nil {
@@ -910,7 +1069,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/etc/wolnut-agent/agent.env
-ExecStart=/usr/local/bin/wolnut-agent serve --listen ${WOLNUT_AGENT_LISTEN}
+ExecStart=/var/lib/wolnut-agent/wolnut-agent serve --listen ${WOLNUT_AGENT_LISTEN} --download-base ${WOLNUT_AGENT_DOWNLOAD_BASE_URL}
 Restart=on-failure
 RestartSec=5
 User=root
@@ -938,13 +1097,32 @@ WantedBy=multi-user.target
 	return nil
 }
 
-func runServe(stateDir, listen string) error {
-	stateStore := &store{dir: stateDir}
-	if _, err := stateStore.initialize(); err != nil {
+func runServe(stateDir, listen, downloadBase string) error {
+	downloadBase, err := validateDownloadBase(downloadBase)
+	if err != nil {
 		return err
+	}
+	stateStore := &store{dir: stateDir}
+	state, err := stateStore.initialize()
+	if err != nil {
+		return err
+	}
+	if state.UpdateStatus == "restart_pending" && state.LatestVersion == version {
+		state.UpdateStatus = "updated"
+		state.LastUpdateError = ""
+		if err := stateStore.save(state); err != nil {
+			return err
+		}
 	}
 	service := &server{
 		store: stateStore, poweroff: systemdPoweroff{}, shutdownDelay: 2 * time.Second,
+		updater: &releaseUpdater{
+			downloadBase: downloadBase,
+			binaryPath:   filepath.Join(stateDir, "wolnut-agent"),
+		},
+	}
+	if state.AutoUpdate {
+		go service.runAutoUpdates()
 	}
 	httpServer := &http.Server{
 		Addr:              listen,
@@ -969,6 +1147,7 @@ func main() {
 	flags := flag.NewFlagSet(command, flag.ExitOnError)
 	stateDir := flags.String("state-dir", defaultStateDir, "agent state directory")
 	listen := flags.String("listen", defaultListen, "listen address")
+	downloadBase := flags.String("download-base", defaultDownloadBase, "HTTPS agent release directory")
 	confirm := flags.Bool("confirm", false, "confirm destructive action")
 	enrollmentURL := flags.String("enroll-url", "", "Wolnut HTTPS enrollment endpoint")
 	enrollmentToken := flags.String("enrollment-token", "", "one-time Wolnut enrollment token")
@@ -977,7 +1156,7 @@ func main() {
 	var err error
 	switch command {
 	case "serve":
-		err = runServe(*stateDir, *listen)
+		err = runServe(*stateDir, *listen, *downloadBase)
 	case "pairing-code":
 		err = pairingCode(stateStore)
 	case "reset-pairing":
@@ -985,7 +1164,7 @@ func main() {
 	case "enroll":
 		err = enrollAgent(stateStore, *enrollmentURL, *enrollmentToken, nil)
 	case "install-service":
-		err = installService(*listen, *enrollmentURL, *enrollmentToken)
+		err = installService(*listen, *downloadBase, *enrollmentURL, *enrollmentToken)
 	case "version", "--version":
 		fmt.Printf("wolnut-agent %s protocol v%d\n", version, protocolVersion)
 	default:
