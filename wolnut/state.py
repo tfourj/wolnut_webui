@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+import uuid
 
 from hashlib import md5
 from pathlib import Path
@@ -41,6 +42,7 @@ class ClientStateTracker:
         self._meta_state: Dict[str, Any] = {
             "ups_on_battery": False,
             "battery_percent_at_shutdown": 100,
+            "outage_id": None,
         }
         self._client_states: Dict[str, Dict[str, Any]] = {}
 
@@ -57,7 +59,21 @@ class ClientStateTracker:
                     "wol_sent": False,
                     "wol_sent_at": 0,
                     "skip": False,
+                    "shutdown": self._new_shutdown_state(),
                 }
+
+    @staticmethod
+    def _new_shutdown_state() -> Dict[str, Any]:
+        return {
+            "command_id": None,
+            "last_attempt_at": 0,
+            "acknowledged": False,
+            "acknowledged_at": 0,
+            "last_error": None,
+            "battery_percent": None,
+            "source": None,
+            "failure_notified": False,
+        }
 
     def _load_state(self):
         """
@@ -73,6 +89,8 @@ class ClientStateTracker:
             save_data = json.loads(raw_data)
             self._meta_state.update(save_data["meta"])
             self._client_states = save_data.get("clients", {})
+            for client_state in self._client_states.values():
+                client_state.setdefault("shutdown", self._new_shutdown_state())
             self._status_hash = status_hash
             logger.info("State loaded from %s", self._status_file)
         except Exception as e:
@@ -174,12 +192,85 @@ class ClientStateTracker:
             self._meta_state["ups_on_battery"] = is_on_battery
             self._dirty = True
 
+        if is_on_battery and not self._meta_state.get("outage_id"):
+            self._meta_state["outage_id"] = str(uuid.uuid4())
+            self._dirty = True
+
         if self._meta_state["battery_percent_at_shutdown"] != battery_percent:
             self._meta_state["battery_percent_at_shutdown"] = battery_percent
             self._dirty = True
 
     def was_ups_on_battery(self) -> bool:
         return self._meta_state["ups_on_battery"]
+
+    def outage_id(self) -> str | None:
+        return self._meta_state.get("outage_id")
+
+    def begin_outage(self, battery_percent: int) -> str:
+        if not self.was_ups_on_battery():
+            self._meta_state["outage_id"] = str(uuid.uuid4())
+            for state in self._client_states.values():
+                state["shutdown"] = self._new_shutdown_state()
+            self._dirty = True
+        self.set_ups_on_battery(True, battery_percent)
+        return self._meta_state["outage_id"]
+
+    def shutdown_state(self, client_name: str) -> Dict[str, Any]:
+        state = self._client_states.get(client_name, {})
+        return state.get("shutdown", self._new_shutdown_state())
+
+    def should_attempt_shutdown(self, client_name: str, retry_delay: int) -> bool:
+        shutdown = self.shutdown_state(client_name)
+        if shutdown.get("acknowledged"):
+            return False
+        return time.time() - shutdown.get("last_attempt_at", 0) >= retry_delay
+
+    def record_shutdown_attempt(
+        self,
+        client_name: str,
+        command_id: str,
+        battery_percent: int,
+        source: str,
+        error: str | None = None,
+    ) -> None:
+        if client_name not in self._client_states:
+            return
+        shutdown = self._client_states[client_name].setdefault(
+            "shutdown", self._new_shutdown_state()
+        )
+        shutdown.update(
+            {
+                "command_id": command_id,
+                "last_attempt_at": int(time.time()),
+                "battery_percent": battery_percent,
+                "source": source,
+                "last_error": error,
+            }
+        )
+        self._dirty = True
+
+    def acknowledge_shutdown(self, client_name: str) -> None:
+        if client_name not in self._client_states:
+            return
+        shutdown = self._client_states[client_name].setdefault(
+            "shutdown", self._new_shutdown_state()
+        )
+        shutdown.update(
+            {
+                "acknowledged": True,
+                "acknowledged_at": int(time.time()),
+                "last_error": None,
+            }
+        )
+        self._dirty = True
+
+    def mark_shutdown_failure_notified(self, client_name: str) -> None:
+        if client_name in self._client_states:
+            shutdown = self._client_states[client_name].setdefault(
+                "shutdown", self._new_shutdown_state()
+            )
+            shutdown["failure_notified"] = True
+            self._dirty = True
 
     def reset(self):
         for state in self._client_states.values():
@@ -193,6 +284,7 @@ class ClientStateTracker:
             )
         # Also reset the meta state for a complete reset
         self.set_ups_on_battery(False)
+        self._meta_state["outage_id"] = None
         self._dirty = True
 
     def sync_clients(self, clients: List[Any]):
@@ -207,6 +299,7 @@ class ClientStateTracker:
                     "wol_sent": False,
                     "wol_sent_at": 0,
                     "skip": False,
+                    "shutdown": self._new_shutdown_state(),
                 }
                 self._dirty = True
                 logger.info("Tracking new client: %s", client.name)

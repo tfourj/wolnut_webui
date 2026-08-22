@@ -46,6 +46,12 @@ clients:
     mac: 38:f7:cd:c5:87:6b
     always_wake: false               # Default: only wake if online before outage; true = always wake even if asleep/offline
     enabled: true                    # Set false to temporarily disable without deleting
+    wake_enabled: true               # Set false for shutdown-only devices
+    shutdown:
+      enabled: false                 # Pair the agent before enabling
+      battery_percent: 20            # Shut down at or below this UPS charge
+      agent_id: null                 # Managed by the pairing flow
+      agent_port: 8184
   - name: "client 2"
     host: hostname.local             # You can use a hostname if it resolves to a reachable interface
     mac: auto                        # MAC will be resolved using ARP at runtime

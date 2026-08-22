@@ -221,6 +221,72 @@ def test_load_config_status_path_override(mocker, minimal_config_dict):
     assert cfg.status_file == "/override/status.json"
 
 
+def test_shutdown_defaults_preserve_existing_clients(mocker, minimal_config_dict):
+    mocker.patch("builtins.open", mocker.mock_open(read_data=yaml.safe_dump(minimal_config_dict)))
+
+    cfg = config.load_config("dummy.yaml", False)
+
+    assert cfg.clients[0].wake_enabled is True
+    assert cfg.clients[0].shutdown.enabled is False
+    assert cfg.clients[0].shutdown.battery_percent == 20
+    assert cfg.clients[0].shutdown.agent_port == 8184
+
+
+def test_shutdown_only_client_does_not_require_mac():
+    raw = {
+        "nut": {"ups": "ups@localhost"},
+        "clients": [
+            {
+                "name": "shutdown-only",
+                "host": "server.local",
+                "wake_enabled": False,
+                "shutdown": {"enabled": False, "battery_percent": 30},
+            }
+        ],
+    }
+
+    config.validate_config(raw)
+
+
+@pytest.mark.parametrize(
+    "shutdown, message",
+    [
+        ({"battery_percent": 0}, "between 1 and 100"),
+        ({"battery_percent": 101}, "between 1 and 100"),
+        ({"agent_port": 0}, "between 1 and 65535"),
+        ({"enabled": True}, "must be paired"),
+    ],
+)
+def test_shutdown_config_validation(shutdown, message):
+    raw = {
+        "nut": {"ups": "ups@localhost"},
+        "clients": [
+            {
+                "name": "server",
+                "host": "server.local",
+                "mac": "00:11:22:33:44:55",
+                "shutdown": shutdown,
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match=message):
+        config.validate_config(raw)
+
+
+def test_client_names_must_be_unique():
+    raw = {
+        "nut": {"ups": "ups@localhost"},
+        "clients": [
+            {"name": "server", "host": "one", "mac": "00:11:22:33:44:55"},
+            {"name": "server", "host": "two", "mac": "00:11:22:33:44:56"},
+        ],
+    }
+
+    with pytest.raises(ValueError, match="must be unique"):
+        config.validate_config(raw)
+
+
 def test_load_config_yaml_error(mocker):
     """Tests that None is returned on a YAML parsing error."""
     mocker.patch("builtins.open", mocker.mock_open(read_data="not: valid: yaml"))

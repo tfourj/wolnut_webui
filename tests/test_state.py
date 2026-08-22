@@ -222,6 +222,35 @@ def test_methods_handle_unknown_client(tracker):
     assert tracker.should_attempt_wol(unknown, 30)
 
 
+def test_shutdown_state_is_idempotent_and_persisted(tracker, mocker):
+    tracker.begin_outage(40)
+    command_id = f"{tracker.outage_id()}:client-1"
+    mock_time = mocker.patch("wolnut.state.time.time", return_value=1000)
+
+    tracker.record_shutdown_attempt("client-1", command_id, 20, "automatic")
+    assert not tracker.should_attempt_shutdown("client-1", 30)
+
+    mock_time.return_value = 1030
+    assert tracker.should_attempt_shutdown("client-1", 30)
+    tracker.acknowledge_shutdown("client-1")
+    assert not tracker.should_attempt_shutdown("client-1", 30)
+    assert tracker.shutdown_state("client-1")["acknowledged"] is True
+
+
+def test_new_outage_resets_shutdown_delivery_state(tracker):
+    tracker.begin_outage(50)
+    first_outage = tracker.outage_id()
+    tracker.record_shutdown_attempt("client-1", "first", 20, "automatic", "offline")
+    tracker.acknowledge_shutdown("client-1")
+    tracker.reset()
+
+    tracker.begin_outage(45)
+
+    assert tracker.outage_id() != first_outage
+    assert tracker.shutdown_state("client-1")["acknowledged"] is False
+    assert tracker.shutdown_state("client-1")["command_id"] is None
+
+
 def test_save_state_json_serialization_error(tracker, mocker, caplog):
     """Tests that an error is logged if JSON serialization fails during save."""
     mocker.patch("wolnut.state.json.dumps", side_effect=TypeError("Test error"))

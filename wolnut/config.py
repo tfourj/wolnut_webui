@@ -32,12 +32,22 @@ class WakeOnConfig:
 
 
 @dataclass
+class ShutdownConfig:
+    enabled: bool = False
+    battery_percent: int = 20
+    agent_id: str | None = None
+    agent_port: int = 8184
+
+
+@dataclass
 class ClientConfig:
     name: str
     host: str
-    mac: str  # "auto" supported
+    mac: str = ""  # "auto" supported when Wake-on-LAN is enabled
     always_wake: bool = False  # if True, wake even if offline before power loss (default: only if was online)
     enabled: bool = True  # if False, client is ignored (no ping, no WOL) - useful to temporarily disable
+    wake_enabled: bool = True
+    shutdown: ShutdownConfig = field(default_factory=ShutdownConfig)
 
 
 @dataclass
@@ -195,8 +205,17 @@ def load_config(
     allowed_client_fields = set(ClientConfig.__dataclass_fields__.keys())
     for raw_client in raw["clients"]:
         try:
-            mac = raw_client["mac"]
-            if mac == "auto":
+            shutdown_raw = raw_client.get("shutdown", {}) or {}
+            shutdown = ShutdownConfig(
+                **{
+                    key: value
+                    for key, value in shutdown_raw.items()
+                    if key in ShutdownConfig.__dataclass_fields__
+                }
+            )
+            wake_enabled = raw_client.get("wake_enabled", True)
+            mac = raw_client.get("mac", "")
+            if wake_enabled and mac == "auto":
                 logger.info(
                     "Resolving MAC for %s at %s...",
                     raw_client["name"],
@@ -211,7 +230,12 @@ def load_config(
                 logger.info("MAC for %s: %s", raw_client["name"], resolved_mac)
 
             # Filter to known fields so unknown keys don't crash, but keep defaults for new optional fields
-            filtered = {k: v for k, v in raw_client.items() if k in allowed_client_fields}
+            filtered = {
+                k: v
+                for k, v in raw_client.items()
+                if k in allowed_client_fields and k != "shutdown"
+            }
+            filtered["shutdown"] = shutdown
             clients.append(ClientConfig(**filtered))
         except ValueError as e:
             logger.error("Failed to load client %s: %s", raw_client.get("name", "?"), e)
@@ -243,6 +267,7 @@ def validate_config(raw: dict):
     if "status_file" not in raw:
         logger.warning("No 'status_file' specified in config, using default.")
 
+    names: set[str] = set()
     for i, client in enumerate(raw["clients"]):
         if "name" not in client:
             raise ValueError(f"Client #{i} is missing required field: 'name'")
@@ -250,17 +275,29 @@ def validate_config(raw: dict):
             raise ValueError(
                 f"Client '{client.get('name', '?')}' is missing required field: 'host'"
             )
-        if "mac" not in client:
+        name = client["name"]
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"Client #{i} has an invalid empty name")
+        if name in names:
+            raise ValueError(f"Client names must be unique: '{name}'")
+        names.add(name)
+
+        wake_enabled = client.get("wake_enabled", True)
+        if not isinstance(wake_enabled, bool):
+            raise ValueError(
+                f"Client '{name}' has invalid 'wake_enabled' (must be boolean)"
+            )
+        if wake_enabled and "mac" not in client:
             raise ValueError(
                 f"Client '{client['name']}' is missing required field: 'mac'"
             )
 
-        mac = client["mac"]
+        mac = client.get("mac", "")
         if not isinstance(mac, str):
             raise ValueError(
                 f"Client '{client['name']}' has invalid mac format (should be string or 'auto')"
             )
-        if mac != "auto" and not validate_mac_format(mac):
+        if wake_enabled and mac != "auto" and not validate_mac_format(mac):
             raise ValueError(
                 f"Client '{client['name']}' has invalid MAC address format: {mac}"
             )
@@ -268,3 +305,39 @@ def validate_config(raw: dict):
             raise ValueError(f"Client '{client['name']}' has invalid 'always_wake' (must be boolean)")
         if "enabled" in client and not isinstance(client["enabled"], bool):
             raise ValueError(f"Client '{client['name']}' has invalid 'enabled' (must be boolean)")
+
+        shutdown = client.get("shutdown", {}) or {}
+        if not isinstance(shutdown, dict):
+            raise ValueError(f"Client '{name}' has invalid 'shutdown' settings")
+        shutdown_enabled = shutdown.get("enabled", False)
+        if not isinstance(shutdown_enabled, bool):
+            raise ValueError(
+                f"Client '{name}' has invalid 'shutdown.enabled' (must be boolean)"
+            )
+        battery_percent = shutdown.get("battery_percent", 20)
+        if (
+            not isinstance(battery_percent, int)
+            or isinstance(battery_percent, bool)
+            or not 1 <= battery_percent <= 100
+        ):
+            raise ValueError(
+                f"Client '{name}' shutdown battery percentage must be between 1 and 100"
+            )
+        agent_port = shutdown.get("agent_port", 8184)
+        if (
+            not isinstance(agent_port, int)
+            or isinstance(agent_port, bool)
+            or not 1 <= agent_port <= 65535
+        ):
+            raise ValueError(
+                f"Client '{name}' shutdown agent port must be between 1 and 65535"
+            )
+        agent_id = shutdown.get("agent_id")
+        if agent_id is not None and (
+            not isinstance(agent_id, str) or not agent_id.strip()
+        ):
+            raise ValueError(f"Client '{name}' has invalid shutdown agent ID")
+        if shutdown_enabled and not agent_id:
+            raise ValueError(
+                f"Client '{name}' must be paired before automatic shutdown is enabled"
+            )
