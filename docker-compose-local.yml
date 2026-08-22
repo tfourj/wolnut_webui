@@ -12,3 +12,5 @@ services:
             - ADMIN_USERNAME=admin
             - ADMIN_PASSWORD=changeme
             - WOLNUT_JWT_SECRET=change-this-to-a-long-random-secret
+            #- WOLNUT_FORWARDED_ALLOW_IPS=127.0.0.1
+            #- WOLNUT_SECURITY_DIR=/config/security

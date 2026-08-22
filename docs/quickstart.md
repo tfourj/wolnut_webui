@@ -38,7 +38,9 @@ environment:
   - WOLNUT_JWT_SECRET=change-this-to-a-long-random-secret
 ```
 
-Change to secure values. `ADMIN_USERNAME`/`ADMIN_PASSWORD` are the WebUI login.
+Change all three values. `WOLNUT_JWT_SECRET` must be an unpredictable value of
+at least 32 characters. Secure shutdown administration remains disabled when
+these settings are absent or weak.
 
 ## 4. Run compose
 
@@ -50,9 +52,13 @@ Requires `network_mode: host` for Wake-on-LAN — do not add `ports`. WebUI is a
 
 ## 5. Setup in WebUI
 
-Open `http://<host>:8183`, log in with `ADMIN_USERNAME` / `ADMIN_PASSWORD`, then
+Open the WebUI, log in with `ADMIN_USERNAME` / `ADMIN_PASSWORD`, then
 configure NUT and clients under **Configuration** and **Clients**. All settings
 are hot-reloaded, so no restart is needed.
+
+HTTP is sufficient for initial Wake-on-LAN configuration, but agent pairing,
+automatic shutdown settings, manual shutdown, and unpairing require HTTPS.
+Follow [Secure shutdown agent setup](agent.md) before enabling those controls.
 
 Optional notifications can be configured under **Notifications**. Enable a
 Discord webhook, Gotify, or ntfy provider, enter its settings, and use the
