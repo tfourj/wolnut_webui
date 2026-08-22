@@ -1,12 +1,15 @@
+import hashlib
 import json
 import logging
 import os
+import shlex
 import subprocess
 import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Literal, Optional
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -30,6 +33,7 @@ from wolnut.config import (
 )
 from wolnut.agent_client import AgentClient, AgentError, SecurityStore
 from wolnut.config_store import ConfigStore
+from wolnut.enrollment import EnrollmentError, EnrollmentStore
 from wolnut.monitor import get_ups_status, get_ups_status_detailed, is_client_online
 from wolnut.notifications import NotificationService
 from wolnut.state import DEFAULT_STATE_FILEPATH
@@ -195,6 +199,49 @@ class AgentUnpairRequest(BaseModel):
     force_local: bool = False
 
 
+class AgentEnrollmentRequest(BaseModel):
+    client_name: str
+    agent_port: int = Field(default=8184, ge=1, le=65535)
+
+
+class AgentEnrollmentCompleteRequest(BaseModel):
+    token: str = Field(..., min_length=32, max_length=128)
+    agent_id: str = Field(..., pattern=r"^[0-9a-f]{32}$")
+    csr: str = Field(..., min_length=128, max_length=16384)
+    hostname: str = Field(default="", max_length=255)
+    version: str = Field(default="", max_length=64)
+
+
+def build_agent_install_command(public_url: str, token: str, agent_port: int) -> str:
+    download_base = os.getenv(
+        "WOLNUT_AGENT_DOWNLOAD_BASE_URL",
+        "https://github.com/tfourj/wolnut_webui/releases/latest/download",
+    ).rstrip("/")
+    if not download_base.startswith("https://"):
+        raise ValueError("WOLNUT_AGENT_DOWNLOAD_BASE_URL must use HTTPS")
+    enrollment_url = public_url.rstrip("/") + "/api/agents/enroll"
+    quoted_base = shlex.quote(download_base)
+    quoted_enrollment = shlex.quote(enrollment_url)
+    quoted_token = shlex.quote(token)
+    listen = shlex.quote(f"0.0.0.0:{agent_port}")
+    return (
+        'TMP="$(mktemp -d)" && trap \'rm -rf "$TMP"\' EXIT && '
+        'ARCH="$(uname -m)" && case "$ARCH" in '
+        "x86_64) ARCH=amd64 ;; aarch64|arm64) ARCH=arm64 ;; "
+        '*) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;; esac && '
+        f"BASE={quoted_base} && "
+        'BIN="wolnut-agent-linux-$ARCH" && '
+        'curl --proto "=https" --proto-redir "=https" --tlsv1.2 -fsSL '
+        '"$BASE/$BIN" -o "$TMP/$BIN" && '
+        'curl --proto "=https" --proto-redir "=https" --tlsv1.2 -fsSL '
+        '"$BASE/$BIN.sha256" -o "$TMP/$BIN.sha256" && '
+        '(cd "$TMP" && sha256sum -c "$BIN.sha256") && '
+        'chmod 0755 "$TMP/$BIN" && '
+        f'sudo "$TMP/$BIN" install-service --listen {listen} '
+        f"--enroll-url {quoted_enrollment} --enrollment-token {quoted_token}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Auth helpers (JWT bearer)
 # ---------------------------------------------------------------------------
@@ -294,6 +341,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
     st_path = resolve_status_path(status_file)
     config_store = ConfigStore(cfg_path)
     security_store = SecurityStore()
+    enrollment_store = EnrollmentStore(security_store.directory)
     state_lock = threading.RLock()
 
     # --- auth setup ---
@@ -336,6 +384,18 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                 status_code=426,
                 detail="Secure shutdown administration requires HTTPS",
             )
+
+    def _public_url(request: Request) -> str:
+        value = os.getenv("WOLNUT_PUBLIC_URL", "").strip() or str(
+            request.base_url
+        ).rstrip("/")
+        parsed = urlsplit(value)
+        if parsed.scheme != "https" or not parsed.netloc or parsed.username:
+            raise HTTPException(
+                status_code=503,
+                detail="WOLNUT_PUBLIC_URL must be a valid HTTPS URL",
+            )
+        return value.rstrip("/")
 
     # --- helpers inside closure ---
     def _read_config_or_default() -> dict:
@@ -744,6 +804,128 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             "config_path": cfg_path,
             "status_path": st_path,
         }
+
+    @app.post("/api/agents/enrollments")
+    def create_agent_enrollment(
+        req: AgentEnrollmentRequest,
+        request: Request,
+        user: str = Depends(require_auth),
+    ):
+        _require_secure_admin(request)
+        raw = _read_config_or_default()
+        client = _find_client(raw, req.client_name)
+        if (client.get("shutdown", {}) or {}).get("agent_id"):
+            raise HTTPException(
+                status_code=409,
+                detail="Unpair the existing agent before creating an install command",
+            )
+        created = enrollment_store.create(req.client_name, req.agent_port)
+        try:
+            command = build_agent_install_command(
+                _public_url(request), created["token"], req.agent_port
+            )
+        except ValueError as error:
+            enrollment_store.fail(created["enrollment_id"], str(error))
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        logger.warning(
+            "One-time agent enrollment created for %s by %s",
+            req.client_name,
+            user,
+        )
+        return {
+            "enrollment_id": created["enrollment_id"],
+            "expires_at": created["expires_at"],
+            "install_command": command,
+        }
+
+    @app.get("/api/agents/enrollments/{enrollment_id}")
+    def get_agent_enrollment(
+        enrollment_id: str,
+        request: Request,
+        user: str = Depends(require_auth),
+    ):
+        _require_secure_admin(request)
+        try:
+            return enrollment_store.status(enrollment_id)
+        except EnrollmentError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post("/api/agents/enroll")
+    def complete_agent_enrollment(
+        req: AgentEnrollmentCompleteRequest,
+        request: Request,
+    ):
+        if not _is_secure_request(request):
+            raise HTTPException(
+                status_code=426,
+                detail="Agent enrollment requires HTTPS",
+            )
+        csr_hash = hashlib.sha256(req.csr.encode()).hexdigest()
+        try:
+            enrollment_id, enrollment = enrollment_store.claim(
+                req.token,
+                agent_id=req.agent_id,
+                csr_hash=csr_hash,
+            )
+        except EnrollmentError as error:
+            raise HTTPException(
+                status_code=403,
+                detail="Enrollment token is invalid, expired, or already used",
+            ) from error
+
+        client_name = str(enrollment["client_name"])
+        try:
+            server_cert = security_store.sign_agent_csr(req.csr, req.agent_id)
+            identity = security_store.ensure_controller_identity()
+
+            def persist_enrollment(value: dict) -> dict:
+                target = _find_client(value, client_name)
+                shutdown = target.setdefault("shutdown", {})
+                existing_agent = shutdown.get("agent_id")
+                if existing_agent and existing_agent != req.agent_id:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Client was paired while enrollment was in progress",
+                    )
+                shutdown.update(
+                    {
+                        "enabled": False,
+                        "battery_percent": shutdown.get("battery_percent", 20),
+                        "agent_id": req.agent_id,
+                        "agent_port": int(enrollment["agent_port"]),
+                    }
+                )
+                validate_config(value)
+                return value
+
+            config_store.update(persist_enrollment)
+            enrollment_store.complete(enrollment_id, req.agent_id)
+            details = {
+                "hostname": req.hostname,
+                "version": req.version,
+            }
+            _record_agent_result(
+                client_name,
+                status="paired",
+                details=details,
+            )
+            logger.warning(
+                "Agent enrolled for client %s using one-time token", client_name
+            )
+            return {
+                "status": "paired",
+                "protocol_version": 1,
+                "agent_id": req.agent_id,
+                "controller_ca": identity.ca_cert.read_text(),
+                "controller_cert": identity.client_cert.read_text(),
+                "server_cert": server_cert,
+            }
+        except HTTPException as error:
+            enrollment_store.fail(enrollment_id, str(error.detail))
+            raise
+        except (AgentError, EnrollmentError, OSError, ValueError) as error:
+            enrollment_store.fail(enrollment_id, str(error))
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
     @app.post("/api/agents/pair")
     def pair_agent(
