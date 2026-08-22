@@ -52,8 +52,9 @@ environment:
 The agent validates this address with the device's normal system trust store.
 For a private certificate authority, install that CA on the device. Do not
 disable TLS verification. If binaries are hosted somewhere other than the
-project's latest GitHub release, configure an HTTPS directory containing both
-architectures and their `.sha256` files:
+project's latest GitHub release, configure an HTTPS directory containing
+`install.sh`, `uninstall.sh`, both agent architectures, and every matching
+`.sha256` file:
 
 ```yaml
 environment:
@@ -65,11 +66,16 @@ environment:
 1. Add the client in Wolnut and save the configuration.
 2. In the client's **Secure shutdown** section, choose **Quick install**.
 3. Confirm the agent port and generate the command.
-4. Copy the command and run it on the Linux device. It detects amd64 or arm64,
-   downloads the binary and checksum over HTTPS, verifies the checksum, asks
-   for sudo, enrolls the agent, and starts the hardened systemd service.
+4. Copy the command and run it on the Linux device. It downloads and verifies
+   `install.sh`; the installer then detects amd64 or arm64, verifies the agent
+   binary, enrolls it, and starts the hardened systemd service.
 5. Keep the dialog open to see the live enrollment result. Test the connection,
    then enable **Automatic shutdown**, choose a threshold, and save.
+
+The installer runs directly when the current account is root, including on a
+default Proxmox host where `sudo` is not installed. For an unprivileged account
+it uses `sudo` when available. If neither condition applies, it explains how to
+log in as root with `su -` and rerun the same command.
 
 The command contains a 256-bit enrollment token that expires after 10 minutes.
 Wolnut stores only its SHA-256 hash, binds it to the first agent identity and
@@ -77,35 +83,27 @@ certificate request, and invalidates older commands for the same client. Do
 not share the command while it is valid. A retry from that same agent is
 allowed if the HTTPS response was interrupted.
 
-The download is never piped into a shell. Installation proceeds only after
-`sha256sum` validates the separately downloaded release checksum. Automatic
-enrollment does not enable battery shutdown by itself.
+No download is piped directly into a shell. The generated command verifies the
+separately downloaded installer checksum before running it, and the installer
+verifies the agent binary in the same way. Automatic enrollment does not
+enable battery shutdown by itself.
 
 ## Manual installation
 
-Download the binary and matching checksum from the desired GitHub release.
-Replace `VERSION` and `ARCH` (`amd64` or `arm64`) below:
+Choose **Manual install** in the client's Secure shutdown section, select the
+port, and click **Show manual commands**. Wolnut provides separate commands to:
 
-```bash
-curl -LO https://github.com/tfourj/wolnut_webui/releases/download/VERSION/wolnut-agent-linux-ARCH
-curl -LO https://github.com/tfourj/wolnut_webui/releases/download/VERSION/wolnut-agent-linux-ARCH.sha256
-sha256sum -c wolnut-agent-linux-ARCH.sha256
-chmod 0755 wolnut-agent-linux-ARCH
-sudo ./wolnut-agent-linux-ARCH install-service
-```
+1. Download, verify, and run `install.sh` without an enrollment secret.
+2. Generate the one-time pairing code and certificate fingerprint on the
+   device.
+3. Return to Wolnut's certificate-pinned manual pairing dialog.
 
-`install-service` copies the binary to `/usr/local/bin/wolnut-agent`, creates a
-hardened root systemd service, and starts it on `0.0.0.0:8184`. Agent state and
-private keys are stored in `/var/lib/wolnut-agent/state.json` with root-only
+The installer copies the agent to `/usr/local/bin/wolnut-agent`, creates a
+hardened root systemd service, and starts it on the selected port. Agent state
+and private keys are stored in `/var/lib/wolnut-agent/state.json` with root-only
 permissions. The local listen configuration is stored in
 `/etc/wolnut-agent/agent.env`; edit it only as root, then restart
 `wolnut-agent`.
-
-To use another address or port:
-
-```bash
-sudo ./wolnut-agent-linux-ARCH install-service --listen 192.168.1.20:9191
-```
 
 Allow that port through the firewall only from the Wolnut controller.
 
@@ -113,10 +111,11 @@ Allow that port through the firewall only from the Wolnut controller.
 
 1. Add or edit the client in Wolnut. Disable **Wake on restore** if the device
    is shutdown-only, then save the configuration.
-2. On the device, generate fresh enrollment values:
+2. On the device, generate fresh enrollment values as root (directly or with
+   `sudo` when it is installed):
 
    ```bash
-   sudo wolnut-agent pairing-code
+   wolnut-agent pairing-code
    ```
 
 3. Within 10 minutes, choose **Pair manually** in the client's Secure shutdown
@@ -129,6 +128,18 @@ Allow that port through the firewall only from the Wolnut controller.
 
 The pairing code is 128 bits, expires after 10 minutes, is single-use, and
 locks after five failed attempts. Run `pairing-code` again to rotate it.
+
+## Uninstalling
+
+Expand **Uninstall command** in the Manual install dialog to copy a verified
+command for the matching release. `uninstall.sh` stops and disables the
+systemd service and removes the installed binary. By default it preserves
+`/var/lib/wolnut-agent` and `/etc/wolnut-agent` so pairing state and
+configuration can be recovered. Run the downloaded script with `--purge` only
+when you also want to permanently remove that data.
+
+Like the installer, the uninstaller runs directly as root and falls back to
+`sudo` only when needed and available.
 
 ## Operation and recovery
 
@@ -143,12 +154,13 @@ locks after five failed attempts. Run `pairing-code` again to rotate it.
   Re-pair the agent to rotate its five-year leaf certificate.
 
 Normal **Unpair** resets both sides. If the device is unreachable, the WebUI
-can forget it locally; afterward reset the device before pairing again:
+can forget it locally; afterward run these commands as root (directly or with
+`sudo`) before pairing again:
 
 ```bash
-sudo wolnut-agent reset-pairing --confirm
-sudo systemctl restart wolnut-agent
-sudo wolnut-agent pairing-code
+wolnut-agent reset-pairing --confirm
+systemctl restart wolnut-agent
+wolnut-agent pairing-code
 ```
 
 Back up `/config/security` together with Wolnut's configuration. Possession of

@@ -38,10 +38,16 @@ This helps reboot systems automatically after a controlled shutdown caused by a 
 
 Shutdown management is opt-in per client. After saving a client, choose
 **Quick install** to generate a short-lived one-line command. Run it on the
-Linux systemd device to download the checksum-verified agent, install its
-hardened service, and enroll it automatically over HTTPS. Certificate-pinned
-manual pairing remains available as a fallback. Pairing does not enable
-automatic shutdown; choose a threshold and save the configuration afterward.
+Linux systemd device to verify and run `install.sh`, download the matching
+checksum-verified agent, install its hardened service, and enroll it
+automatically over HTTPS. The installer runs directly for root users such as a
+default Proxmox login, and uses `sudo` only when required and available.
+
+Choose **Manual install** to install the daemon without an enrollment secret,
+then finish certificate-pinned pairing using the device's one-time code and
+fingerprint. The same dialog provides a verified `uninstall.sh` command.
+Pairing does not enable automatic shutdown; choose a threshold and save the
+configuration afterward.
 
 The agent accepts only status, shutdown, and unpair requests. A shutdown
 acknowledgement means the agent accepted and scheduled `systemctl poweroff`;
