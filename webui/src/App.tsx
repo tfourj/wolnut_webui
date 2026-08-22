@@ -1636,6 +1636,13 @@ function ClientsTab({
                       Check for update
                     </button>
                     <button
+                      className="btn btn-ghost btn-small"
+                      disabled={isDirty || !shutdownAdminReady || agentBusy}
+                      onClick={() => openManualInstall(idx)}
+                    >
+                      Reinstall agent
+                    </button>
+                    <button
                       className="btn btn-danger btn-small"
                       disabled={isDirty || !shutdownAdminReady || agentBusy}
                       onClick={() => {
@@ -1768,11 +1775,13 @@ function ClientsTab({
             aria-labelledby="manual-install-title"
           >
             <h2 id="manual-install-title">
-              Manually install {cfg.clients[manualInstallIndex].name}
+              {cfg.clients[manualInstallIndex].shutdown.agent_id ? 'Reinstall' : 'Manually install'}{' '}
+              {cfg.clients[manualInstallIndex].name}
             </h2>
             <p className="desc">
-              This installs the service without an enrollment secret. You will generate a pairing code on the
-              device and finish certificate-pinned pairing in Wolnut.
+              {cfg.clients[manualInstallIndex].shutdown.agent_id
+                ? 'This replaces the service binary while preserving the existing pairing and configuration.'
+                : 'This installs the service without an enrollment secret. You will generate a pairing code on the device and finish certificate-pinned pairing in Wolnut.'}
             </p>
             <div className="field">
               <label>Agent port</label>
@@ -1814,25 +1823,29 @@ function ClientsTab({
                     Copy install command
                   </button>
                 </div>
-                <div className="field">
-                  <label>2. Generate the pairing code and certificate fingerprint</label>
-                  <textarea
-                    className="install-command compact-command"
-                    value={manualCommands.pairing_command}
-                    readOnly
-                    rows={3}
-                    spellCheck={false}
-                  />
-                  <button
-                    className="btn btn-ghost btn-small"
-                    onClick={() => copyCommand(manualCommands.pairing_command, 'Pairing command')}
-                  >
-                    Copy pairing command
-                  </button>
-                </div>
-                <p className="desc">
-                  3. Copy both values printed by the device, then continue to manual pairing.
-                </p>
+                {!cfg.clients[manualInstallIndex].shutdown.agent_id && (
+                  <>
+                    <div className="field">
+                      <label>2. Generate the pairing code and certificate fingerprint</label>
+                      <textarea
+                        className="install-command compact-command"
+                        value={manualCommands.pairing_command}
+                        readOnly
+                        rows={3}
+                        spellCheck={false}
+                      />
+                      <button
+                        className="btn btn-ghost btn-small"
+                        onClick={() => copyCommand(manualCommands.pairing_command, 'Pairing command')}
+                      >
+                        Copy pairing command
+                      </button>
+                    </div>
+                    <p className="desc">
+                      3. Copy both values printed by the device, then continue to manual pairing.
+                    </p>
+                  </>
+                )}
                 <details className="uninstall-details">
                   <summary>Uninstall command</summary>
                   <textarea
@@ -1863,7 +1876,7 @@ function ClientsTab({
               >
                 Close
               </button>
-              {manualCommands && (
+              {manualCommands && !cfg.clients[manualInstallIndex].shutdown.agent_id && (
                 <button
                   className="btn btn-primary"
                   onClick={() => {
