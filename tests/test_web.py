@@ -1,4 +1,5 @@
 import shlex
+import subprocess
 
 import yaml
 from fastapi.testclient import TestClient
@@ -267,13 +268,39 @@ def test_one_line_enrollment_installs_and_pairs_agent(tmp_path, monkeypatch):
     assert created.status_code == 200
     payload = created.json()
     command = payload["install_command"]
-    assert "sha256sum -c" in command
-    assert "curl |" not in command
-    assert "SCRIPT=install.sh" in command
+    assert len(command) < 300
+    assert "/api/agents/install.sh" in command
+    assert "| /bin/sh" in command
     assert "sudo" not in command
-    assert "--enroll-url https://wolnut.example/api/agents/enroll" in command
     arguments = shlex.split(command)
-    token = arguments[arguments.index("--enrollment-token") + 1]
+    authorization = next(
+        argument
+        for argument in arguments
+        if argument.startswith("Authorization: Bearer ")
+    )
+    token = authorization.removeprefix("Authorization: Bearer ")
+
+    installer = client.get(
+        "/api/agents/install.sh",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert installer.status_code == 200
+    assert installer.headers["cache-control"] == "no-store"
+    assert (
+        "download_base=https://github.com/tfourj/wolnut_webui/releases/latest/download"
+        in installer.text
+    )
+    assert "listen_address=0.0.0.0:9191" in installer.text
+    assert "enrollment_url=https://wolnut.example/api/agents/enroll" in installer.text
+    assert f"enrollment_token={token}" in installer.text
+    syntax = subprocess.run(
+        ["/bin/sh", "-n"],
+        input=installer.text,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert syntax.returncode == 0, syntax.stderr
 
     agent_id = "a" * 32
     enrolled = client.post(
@@ -296,6 +323,11 @@ def test_one_line_enrollment_installs_and_pairs_agent(tmp_path, monkeypatch):
     status = client.get(f"/api/agents/enrollments/{payload['enrollment_id']}").json()
     assert status["status"] == "paired"
     assert "token_hash" not in status
+    used_installer = client.get(
+        "/api/agents/install.sh",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert used_installer.status_code == 403
 
 
 def test_manual_install_commands_use_verified_lifecycle_scripts(tmp_path, monkeypatch):
@@ -318,12 +350,41 @@ def test_manual_install_commands_use_verified_lifecycle_scripts(tmp_path, monkey
 
     assert response.status_code == 200
     result = response.json()
-    assert "SCRIPT=install.sh" in result["install_command"]
-    assert "--listen 0.0.0.0:9191" in result["install_command"]
-    assert "--enrollment-token" not in result["install_command"]
+    assert "/api/agents/install.sh?agent_port=9191" in result["install_command"]
+    assert "| /bin/sh" in result["install_command"]
+    assert "Authorization" not in result["install_command"]
     assert "wolnut-agent pairing-code" in result["pairing_command"]
     assert "SCRIPT=uninstall.sh" in result["uninstall_command"]
     assert "sha256sum -c" in result["uninstall_command"]
+
+    installer = client.get(
+        "/api/agents/install.sh?agent_port=9191",
+        headers={"Authorization": ""},
+    )
+    assert installer.status_code == 200
+    assert "listen_address=0.0.0.0:9191" in installer.text
+    assert "enrollment_token=''" in installer.text
+
+
+def test_hosted_installer_rejects_invalid_enrollment_token(tmp_path, monkeypatch):
+    config = {
+        "nut": {"ups": "ups@localhost"},
+        "clients": [
+            {
+                "name": "server",
+                "host": "server.local",
+                "mac": "00:11:22:33:44:55",
+            }
+        ],
+    }
+    client, _ = _secure_app_client(tmp_path, monkeypatch, config)
+
+    response = client.get(
+        "/api/agents/install.sh",
+        headers={"Authorization": "Bearer invalid-enrollment-token"},
+    )
+
+    assert response.status_code == 403
 
 
 def test_one_line_enrollment_requires_https(tmp_path, monkeypatch):
@@ -346,6 +407,12 @@ def test_one_line_enrollment_requires_https(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 426
+
+    installer = client.get(
+        "/api/agents/install.sh",
+        headers={"Authorization": ""},
+    )
+    assert installer.status_code == 426
 
 
 def test_one_line_enrollment_rejects_insecure_download_host(tmp_path, monkeypatch):

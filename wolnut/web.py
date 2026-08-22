@@ -7,6 +7,7 @@ import subprocess
 import threading
 import time
 import uuid
+from importlib import resources
 from pathlib import Path
 from typing import Any, Literal, Optional
 from urllib.parse import urlsplit
@@ -18,7 +19,7 @@ logger = logging.getLogger("wolnut")
 try:
     from fastapi import Depends, FastAPI, HTTPException, Request
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import FileResponse
+    from fastapi.responses import FileResponse, Response
     from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel, Field
@@ -251,36 +252,72 @@ def _agent_script_command(script_name: str, arguments: list[str]) -> str:
     ).rstrip()
 
 
-def build_agent_install_command(public_url: str, token: str, agent_port: int) -> str:
-    download_base = _agent_download_base()
-    enrollment_url = public_url.rstrip("/") + "/api/agents/enroll"
-    return _agent_script_command(
-        "install.sh",
-        [
-            "--download-base",
-            download_base,
-            "--listen",
-            f"0.0.0.0:{agent_port}",
-            "--enroll-url",
-            enrollment_url,
-            "--enrollment-token",
-            token,
-        ],
-    )
+def _agent_pipe_command(
+    public_url: str, token: str = "", agent_port: int = 8184
+) -> str:
+    endpoint = public_url.rstrip("/") + "/api/agents/install.sh"
+    if not token and agent_port != 8184:
+        endpoint += f"?agent_port={agent_port}"
+    arguments = [
+        "curl",
+        "--proto",
+        "=https",
+        "--proto-redir",
+        "=https",
+        "--tlsv1.2",
+        "-fsSL",
+    ]
+    if token:
+        arguments.extend(["-H", f"Authorization: Bearer {token}"])
+    arguments.append(endpoint)
+    return shlex.join(arguments) + " | /bin/sh"
 
 
-def build_agent_manual_commands(agent_port: int) -> dict[str, str]:
-    download_base = _agent_download_base()
-    return {
-        "install_command": _agent_script_command(
-            "install.sh",
-            [
-                "--download-base",
-                download_base,
-                "--listen",
-                f"0.0.0.0:{agent_port}",
-            ],
+def _agent_install_template() -> str:
+    packaged = resources.files("wolnut").joinpath("assets/install.sh")
+    try:
+        return packaged.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        development = Path(__file__).resolve().parent.parent / "agent" / "install.sh"
+        return development.read_text(encoding="utf-8")
+
+
+def build_agent_install_script(
+    *,
+    download_base: str,
+    agent_port: int,
+    enrollment_url: str = "",
+    enrollment_token: str = "",
+) -> str:
+    if not 1 <= agent_port <= 65535:
+        raise ValueError("Agent port must be between 1 and 65535")
+    values = {
+        'download_base="https://github.com/tfourj/wolnut_webui/releases/latest/download"': (
+            "download_base=" + shlex.quote(download_base)
         ),
+        'listen_address="0.0.0.0:8184"': (
+            "listen_address=" + shlex.quote(f"0.0.0.0:{agent_port}")
+        ),
+        'enrollment_url=""': "enrollment_url=" + shlex.quote(enrollment_url),
+        'enrollment_token=""': ("enrollment_token=" + shlex.quote(enrollment_token)),
+    }
+    script = _agent_install_template()
+    for original, replacement in values.items():
+        if script.count(original) != 1:
+            raise ValueError("Packaged agent installer template is invalid")
+        script = script.replace(original, replacement, 1)
+    return script
+
+
+def build_agent_install_command(public_url: str, token: str, agent_port: int) -> str:
+    _agent_download_base()
+    return _agent_pipe_command(public_url, token, agent_port)
+
+
+def build_agent_manual_commands(public_url: str, agent_port: int) -> dict[str, str]:
+    _agent_download_base()
+    return {
+        "install_command": _agent_pipe_command(public_url, agent_port=agent_port),
         "pairing_command": (
             'if [ "$(id -u)" -eq 0 ]; then wolnut-agent pairing-code; '
             "elif command -v sudo >/dev/null 2>&1; then sudo wolnut-agent pairing-code; "
@@ -876,6 +913,60 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             "status_path": st_path,
         }
 
+    @app.get("/api/agents/install.sh")
+    def download_agent_installer(request: Request, agent_port: int = 8184):
+        if not _is_secure_request(request):
+            raise HTTPException(
+                status_code=426,
+                detail="Agent installation requires HTTPS",
+            )
+        authorization = request.headers.get("Authorization", "").strip()
+        enrollment_url = ""
+        enrollment_token = ""
+        if authorization:
+            scheme, separator, credential = authorization.partition(" ")
+            if separator == "" or scheme.lower() != "bearer" or not credential:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid agent enrollment authorization",
+                )
+            enrollment_token = credential.strip()
+            try:
+                enrollment = enrollment_store.bootstrap(enrollment_token)
+            except EnrollmentError as error:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Enrollment token is invalid, expired, or already used",
+                ) from error
+            agent_port = int(enrollment["agent_port"])
+            enrollment_url = _public_url(request) + "/api/agents/enroll"
+        if not 1 <= agent_port <= 65535:
+            raise HTTPException(
+                status_code=422,
+                detail="Agent port must be between 1 and 65535",
+            )
+        try:
+            script = build_agent_install_script(
+                download_base=_agent_download_base(),
+                agent_port=agent_port,
+                enrollment_url=enrollment_url,
+                enrollment_token=enrollment_token,
+            )
+        except (OSError, ValueError) as error:
+            raise HTTPException(
+                status_code=503,
+                detail="Agent installer is unavailable",
+            ) from error
+        return Response(
+            content=script,
+            media_type="text/x-shellscript",
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Disposition": 'inline; filename="install.sh"',
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
     @app.post("/api/agents/manual-install")
     def create_manual_agent_install(
         req: AgentEnrollmentRequest,
@@ -885,7 +976,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         _require_secure_admin(request)
         _find_client(_read_config_or_default(), req.client_name)
         try:
-            return build_agent_manual_commands(req.agent_port)
+            return build_agent_manual_commands(_public_url(request), req.agent_port)
         except ValueError as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
 

@@ -15,11 +15,18 @@ def test_enrollment_token_is_single_use_and_stored_as_hash(tmp_path):
     assert os.stat(store.directory).st_mode & 0o777 == 0o700
     assert os.stat(store.path).st_mode & 0o777 == 0o600
 
+    bootstrap = store.bootstrap(created["token"])
+    assert bootstrap["client_name"] == "server"
+    assert bootstrap["agent_port"] == 8184
+    assert "token_hash" not in bootstrap
+
     enrollment_id, record = store.claim(created["token"])
     assert enrollment_id == created["enrollment_id"]
     assert record["client_name"] == "server"
     with pytest.raises(EnrollmentError, match="already been used"):
         store.claim(created["token"])
+    with pytest.raises(EnrollmentError, match="already been used"):
+        store.bootstrap(created["token"])
 
 
 def test_new_enrollment_supersedes_previous_client_token(tmp_path):
@@ -39,6 +46,14 @@ def test_expired_enrollment_cannot_be_claimed(tmp_path):
         store.claim(created["token"])
 
     assert store.status(created["enrollment_id"])["status"] == "expired"
+
+
+def test_invalid_enrollment_cannot_fetch_bootstrap(tmp_path):
+    store = EnrollmentStore(tmp_path / "security")
+    store.create("server", 8184)
+
+    with pytest.raises(EnrollmentError, match="invalid"):
+        store.bootstrap("not-a-valid-token")
 
 
 def test_only_one_concurrent_claim_succeeds(tmp_path):

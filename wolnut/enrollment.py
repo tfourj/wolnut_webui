@@ -125,6 +125,26 @@ class EnrollmentStore:
                 return enrollment_id, dict(record)
         raise EnrollmentError("Enrollment token is invalid")
 
+    def bootstrap(self, token: str) -> dict[str, Any]:
+        """Return pending enrollment details without consuming the one-time token."""
+        token_hash = self._token_hash(token.strip())
+        now = int(time.time())
+        with self._lock:
+            records = self._read_unlocked()
+            for record in records.values():
+                if not hmac.compare_digest(record.get("token_hash", ""), token_hash):
+                    continue
+                if now > int(record.get("expires_at", 0)):
+                    record["status"] = "expired"
+                    self._write_unlocked(records)
+                    raise EnrollmentError("Enrollment token has expired")
+                if record.get("status") != "pending":
+                    raise EnrollmentError("Enrollment token has already been used")
+                return {
+                    key: value for key, value in record.items() if key != "token_hash"
+                }
+        raise EnrollmentError("Enrollment token is invalid")
+
     def complete(self, enrollment_id: str, agent_id: str) -> None:
         self._set_result(enrollment_id, "paired", agent_id=agent_id)
 
