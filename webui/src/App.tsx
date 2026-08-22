@@ -7,15 +7,24 @@ import {
   getMe,
   getToken,
   login as apiLogin,
+  pairAgent,
   pingHost,
   resolveMac,
   saveConfig,
   sendWol,
   sendWolClient,
+  shutdownAgent,
+  testAgent,
   testNotification,
+  unpairAgent,
   NotificationProvider,
   WolnutConfig,
 } from './api'
+import {
+  isCertificateFingerprintValid,
+  isShutdownConfirmationValid,
+  normalizeShutdownClient,
+} from './shutdownUi'
 
 type Tab = 'dashboard' | 'config' | 'clients' | 'notifications'
 
@@ -43,6 +52,8 @@ const DEFAULT_CFG: WolnutConfig = {
       wake_sent: true,
       client_recovered: true,
       errors: true,
+      shutdown_acknowledged: true,
+      shutdown_failed: true,
     },
   },
 }
@@ -60,6 +71,8 @@ export default function App() {
   const [authUser, setAuthUser] = useState<string | null>(null)
   const [authChecking, setAuthChecking] = useState(true)
   const [saveWarnings, setSaveWarnings] = useState<any[]>([])
+  const [shutdownAdminConfigured, setShutdownAdminConfigured] = useState(false)
+  const [secureTransport, setSecureTransport] = useState(false)
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -72,6 +85,8 @@ export default function App() {
     try {
       const st = await getAuthStatus()
       setAuthEnabled(st.auth_enabled)
+      setShutdownAdminConfigured(!!st.shutdown_admin_configured)
+      setSecureTransport(!!st.secure_transport)
       if (!st.auth_enabled) {
         setAuthUser(null)
         setAuthChecking(false)
@@ -111,6 +126,11 @@ export default function App() {
       } else if (!c.notifications.ntfy) {
         c.notifications.ntfy = { ...DEFAULT_CFG.notifications.ntfy }
       }
+      c.notifications.events = {
+        ...DEFAULT_CFG.notifications.events,
+        ...(c.notifications.events || {}),
+      }
+      c.clients = c.clients.map(normalizeShutdownClient)
       setCfg(c)
       setOriginalCfg(JSON.parse(JSON.stringify(c)))
     } catch (e: any) {
@@ -262,7 +282,18 @@ export default function App() {
 
       {tab === 'dashboard' && <Dashboard cfg={cfg} status={status} showToast={showToast} />}
       {tab === 'config' && cfg && <ConfigForm cfg={cfg} setCfg={setCfg} />}
-      {tab === 'clients' && cfg && <ClientsTab cfg={cfg} setCfg={setCfg} status={status} showToast={showToast} warnings={saveWarnings} />}
+      {tab === 'clients' && cfg && (
+        <ClientsTab
+          cfg={cfg}
+          setCfg={setCfg}
+          status={status}
+          showToast={showToast}
+          warnings={saveWarnings}
+          isDirty={isDirty}
+          shutdownAdminReady={shutdownAdminConfigured && secureTransport}
+          reload={load}
+        />
+      )}
       {tab === 'notifications' && cfg && (
         <NotificationsTab cfg={cfg} setCfg={setCfg} showToast={showToast} />
       )}
@@ -485,7 +516,17 @@ function Dashboard({ cfg, status, showToast }: { cfg: WolnutConfig | null; statu
                     {c.always_wake && (
                       <span style={{ background: '#2a2015', border: '1px solid #f1c40f', color: '#f1c40f', padding: '2px 8px', borderRadius: 999, fontSize: 11 }}>⚠ Always</span>
                     )}
+                    {c.shutdown?.paired && (
+                      <span className="shutdown-badge">
+                        Power off at {c.shutdown.battery_percent}%
+                      </span>
+                    )}
                   </div>
+                  {c.shutdown?.last_result?.status && (
+                    <span>
+                      Last shutdown action: {c.shutdown.last_result.status}
+                    </span>
+                  )}
                 </div>
                 <span className={`badge ${c.online ? 'online' : 'offline'}`}>
                   <span className="badge-dot" style={{ background: c.online ? '#2ecc71' : '#e74c3c' }} />
@@ -743,6 +784,18 @@ function NotificationsTab({
             checked={notifications.events.errors}
             onChange={enabled => setEvent('errors', enabled)}
           />
+          <NotificationEventToggle
+            label="Shutdown accepted"
+            description="A device agent accepts a shutdown request"
+            checked={notifications.events.shutdown_acknowledged}
+            onChange={enabled => setEvent('shutdown_acknowledged', enabled)}
+          />
+          <NotificationEventToggle
+            label="Shutdown delivery failed"
+            description="Wolnut cannot deliver a shutdown request"
+            checked={notifications.events.shutdown_failed}
+            onChange={enabled => setEvent('shutdown_failed', enabled)}
+          />
         </div>
       </div>
 
@@ -966,13 +1019,26 @@ function ClientsTab({
   status,
   showToast,
   warnings = [],
+  isDirty,
+  shutdownAdminReady,
+  reload,
 }: {
   cfg: WolnutConfig
   setCfg: (c: WolnutConfig) => void
   status: any
   showToast: (m: string) => void
   warnings?: any[]
+  isDirty: boolean
+  shutdownAdminReady: boolean
+  reload: () => Promise<void>
 }) {
+  const [pairingIndex, setPairingIndex] = useState<number | null>(null)
+  const [pairingCode, setPairingCode] = useState('')
+  const [fingerprint, setFingerprint] = useState('')
+  const [agentPort, setAgentPort] = useState(8184)
+  const [shutdownIndex, setShutdownIndex] = useState<number | null>(null)
+  const [shutdownConfirmation, setShutdownConfirmation] = useState('')
+  const [agentBusy, setAgentBusy] = useState(false)
   const updateClient = (idx: number, patch: Partial<WolnutConfig['clients'][number]>) => {
     const next = [...cfg.clients]
     next[idx] = { ...next[idx], ...patch }
@@ -981,29 +1047,123 @@ function ClientsTab({
   const removeClient = (idx: number) => {
     setCfg({ ...cfg, clients: cfg.clients.filter((_, i) => i !== idx) })
   }
+  const updateShutdown = (idx: number, patch: Partial<WolnutConfig['clients'][number]['shutdown']>) => {
+    updateClient(idx, {
+      shutdown: {
+        ...cfg.clients[idx].shutdown,
+        ...patch,
+      },
+    })
+  }
   const addClient = () => {
     setCfg({
       ...cfg,
       clients: [
         ...cfg.clients,
-        { name: `client ${cfg.clients.length + 1}`, host: '192.168.0.100', mac: 'auto', always_wake: false, enabled: true },
+        {
+          name: `client ${cfg.clients.length + 1}`,
+          host: '192.168.0.100',
+          mac: 'auto',
+          always_wake: false,
+          enabled: true,
+          wake_enabled: true,
+          shutdown: { enabled: false, battery_percent: 20, agent_id: null, agent_port: 8184 },
+        },
       ],
     })
   }
 
   const liveMap = new Map<string, boolean>()
-  for (const c of status?.clients || []) liveMap.set(c.name, c.online)
+  const statusMap = new Map<string, any>()
+  for (const c of status?.clients || []) {
+    liveMap.set(c.name, c.online)
+    statusMap.set(c.name, c)
+  }
   const isSuppressed = !!cfg.webui?.suppress_mac_warnings
   const effectiveWarnings = isSuppressed ? [] : (warnings || [])
   const warningMap = new Map<string, any>()
   for (const w of effectiveWarnings || []) if (w.client) warningMap.set(w.client, w)
 
+  const openPairing = (idx: number) => {
+    setPairingIndex(idx)
+    setAgentPort(cfg.clients[idx].shutdown.agent_port || 8184)
+    setPairingCode('')
+    setFingerprint('')
+  }
+
+  const runPairing = async () => {
+    if (pairingIndex === null) return
+    const client = cfg.clients[pairingIndex]
+    setAgentBusy(true)
+    try {
+      await pairAgent(client.name, agentPort, pairingCode, fingerprint)
+      showToast(`Secure agent paired for ${client.name}`)
+      setPairingIndex(null)
+      await reload()
+    } catch (error: any) {
+      showToast(`Pairing failed: ${String(error.message || error)}`)
+    } finally {
+      setAgentBusy(false)
+    }
+  }
+
+  const runShutdown = async () => {
+    if (shutdownIndex === null) return
+    const client = cfg.clients[shutdownIndex]
+    setAgentBusy(true)
+    try {
+      await shutdownAgent(client.name, shutdownConfirmation)
+      showToast(`Shutdown accepted by ${client.name}`)
+      setShutdownIndex(null)
+      setShutdownConfirmation('')
+      await reload()
+    } catch (error: any) {
+      showToast(`Shutdown failed: ${String(error.message || error)}`)
+    } finally {
+      setAgentBusy(false)
+    }
+  }
+
+  const runUnpair = async (clientName: string) => {
+    if (!window.confirm(`Unpair the shutdown agent from ${clientName}?`)) return
+    setAgentBusy(true)
+    try {
+      await unpairAgent(clientName, clientName)
+      showToast(`Agent unpaired from ${clientName}`)
+      await reload()
+    } catch (error: any) {
+      const message = String(error.message || error)
+      if (window.confirm(`${message}\n\nForget the pairing locally anyway? The agent must then be reset locally.`)) {
+        try {
+          await unpairAgent(clientName, clientName, true)
+          showToast(`Local pairing forgotten for ${clientName}`)
+          await reload()
+        } catch (forceError: any) {
+          showToast(`Unpair failed: ${String(forceError.message || forceError)}`)
+        }
+      }
+    } finally {
+      setAgentBusy(false)
+    }
+  }
+
   return (
     <div className="card">
+      {!shutdownAdminReady && (
+        <div className="security-warning">
+          <strong>Secure shutdown controls unavailable</strong>
+          <span>
+            Configure admin credentials and a 32-character WOLNUT_JWT_SECRET, then access Wolnut through HTTPS.
+          </span>
+        </div>
+      )}
       {effectiveWarnings && effectiveWarnings.length > 0 && (
         <div style={{ background: '#2a2015', border: '1px solid #f1c40f', color: '#f1c40f', borderRadius: 8, padding: '10px 12px', marginBottom: 12, fontSize: 13 }}>
           <strong style={{ display: 'block', marginBottom: 4 }}>⚠ MAC resolution warning</strong>
-          <span style={{ color: '#e6e8ec' }}>{effectiveWarnings.length} client(s) with MAC "auto" could not be resolved. They will be retried at runtime, but WOL may fail if the host is unreachable.</span>
+          <span style={{ color: '#e6e8ec' }}>
+            {effectiveWarnings.length} client(s) with MAC "auto" could not be resolved. They will be retried at
+            runtime, but WOL may fail if the host is unreachable.
+          </span>
         </div>
       )}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
@@ -1020,6 +1180,8 @@ function ClientsTab({
         const online = liveMap.get(c.name)
         const w = warningMap.get(c.name)
         const isDisabled = c.enabled === false
+        const agentStatus = statusMap.get(c.name)?.shutdown
+        const isPaired = !!c.shutdown.agent_id
         return (
           <div
             key={idx}
@@ -1058,9 +1220,14 @@ function ClientsTab({
                   value={c.mac}
                   onChange={e => updateClient(idx, { mac: e.target.value })}
                   placeholder="38:f7:cd:c5:87:6b or auto"
+                  disabled={c.wake_enabled === false}
                   style={warningMap.get(c.name) ? { borderColor: '#f1c40f', background: '#2a2015' } : undefined}
                 />
-                <span className="inline-help">Use "auto" to resolve via ARP at runtime</span>
+                <span className="inline-help">
+                  {c.wake_enabled === false
+                    ? 'Not required when Wake-on-LAN is disabled'
+                    : 'Use "auto" to resolve via ARP at runtime'}
+                </span>
                 {warningMap.get(c.name) && (
                   <div style={{ background: '#2a2015', border: '1px solid #f1c40f', color: '#f1c40f', borderRadius: 6, padding: '6px 8px', fontSize: 12, marginTop: 6, display: 'flex', gap: 6, alignItems: 'center' }}>
                     <span>⚠</span>
@@ -1073,6 +1240,7 @@ function ClientsTab({
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   <button
                     className="btn btn-ghost btn-small"
+                    disabled={c.wake_enabled === false}
                     onClick={async () => {
                       try {
                         const j = await pingHost(c.host)
@@ -1086,6 +1254,7 @@ function ClientsTab({
                   </button>
                   <button
                     className="btn btn-ghost btn-small"
+                    disabled={c.wake_enabled === false}
                     onClick={async () => {
                       try {
                         const j = await resolveMac(c.host)
@@ -1124,7 +1293,17 @@ function ClientsTab({
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
                 <input
                   type="checkbox"
+                  checked={c.wake_enabled ?? true}
+                  onChange={e => updateClient(idx, { wake_enabled: e.target.checked })}
+                  style={{ width: 16, height: 16 }}
+                />
+                <span>Wake on restore</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                <input
+                  type="checkbox"
                   checked={!!c.always_wake}
+                  disabled={c.wake_enabled === false}
                   onChange={e => updateClient(idx, { always_wake: e.target.checked })}
                   style={{ width: 16, height: 16 }}
                 />
@@ -1151,9 +1330,193 @@ function ClientsTab({
                 </span>
               )}
             </div>
+
+            <div className="shutdown-panel">
+              <div className="shutdown-heading">
+                <div>
+                  <strong>Secure shutdown</strong>
+                  <span>
+                    {isPaired
+                      ? `Paired agent ${c.shutdown.agent_id}`
+                      : 'Pair the Linux agent before enabling automatic shutdown'}
+                  </span>
+                </div>
+                <span className={`badge ${isPaired ? 'online' : ''}`}>
+                  {isPaired ? 'Paired' : 'Not paired'}
+                </span>
+              </div>
+
+              {agentStatus?.last_result && Object.keys(agentStatus.last_result).length > 0 && (
+                <div className="agent-result">
+                  Last result: {agentStatus.last_result.status || 'unknown'}
+                  {agentStatus.last_result.last_error ? ` · ${agentStatus.last_result.last_error}` : ''}
+                </div>
+              )}
+
+              <div className="grid2">
+                <label className="switch-label shutdown-toggle">
+                  <input
+                    type="checkbox"
+                    checked={c.shutdown.enabled}
+                    disabled={!isPaired || !shutdownAdminReady}
+                    onChange={event => updateShutdown(idx, { enabled: event.target.checked })}
+                  />
+                  Automatic shutdown
+                </label>
+                <div className="field shutdown-threshold">
+                  <label>Battery threshold %</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={c.shutdown.battery_percent}
+                    disabled={!isPaired || !shutdownAdminReady}
+                    onChange={event => updateShutdown(idx, { battery_percent: Number(event.target.value) })}
+                  />
+                </div>
+              </div>
+
+              <div className="toolbar">
+                {!isPaired && (
+                  <button
+                    className="btn btn-ghost btn-small"
+                    disabled={isDirty || !shutdownAdminReady || agentBusy}
+                    onClick={() => openPairing(idx)}
+                  >
+                    Pair agent
+                  </button>
+                )}
+                {isPaired && (
+                  <>
+                    <button
+                      className="btn btn-ghost btn-small"
+                      disabled={isDirty || !shutdownAdminReady || agentBusy}
+                      onClick={async () => {
+                        setAgentBusy(true)
+                        try {
+                          const result = await testAgent(c.name)
+                          showToast(`${c.name} agent ${result.version} is online`)
+                          await reload()
+                        } catch (error: any) {
+                          showToast(`Agent test failed: ${String(error.message || error)}`)
+                        } finally {
+                          setAgentBusy(false)
+                        }
+                      }}
+                    >
+                      Test connection
+                    </button>
+                    <button
+                      className="btn btn-danger btn-small"
+                      disabled={isDirty || !shutdownAdminReady || agentBusy}
+                      onClick={() => {
+                        setShutdownIndex(idx)
+                        setShutdownConfirmation('')
+                      }}
+                    >
+                      Shut down now
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-small"
+                      disabled={isDirty || !shutdownAdminReady || agentBusy}
+                      onClick={() => runUnpair(c.name)}
+                    >
+                      Unpair
+                    </button>
+                  </>
+                )}
+                {isDirty && <span className="inline-help">Save configuration before using agent actions.</span>}
+              </div>
+            </div>
           </div>
         )
       })}
+
+      {pairingIndex !== null && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="pair-agent-title">
+            <h2 id="pair-agent-title">Pair agent with {cfg.clients[pairingIndex].name}</h2>
+            <p className="desc">
+              On the device, run <code>sudo wolnut-agent pairing-code</code>, then copy both values below.
+            </p>
+            <div className="field">
+              <label>Agent port</label>
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                value={agentPort}
+                onChange={e => setAgentPort(Number(e.target.value))}
+              />
+            </div>
+            <div className="field">
+              <label>Pairing code</label>
+              <input value={pairingCode} onChange={e => setPairingCode(e.target.value)} autoComplete="off" />
+            </div>
+            <div className="field">
+              <label>SHA-256 certificate fingerprint</label>
+              <input value={fingerprint} onChange={e => setFingerprint(e.target.value)} autoComplete="off" />
+            </div>
+            <div className="toolbar modal-actions">
+              <button
+                className="btn btn-ghost"
+                onClick={() => setPairingIndex(null)}
+                disabled={agentBusy}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={runPairing}
+                disabled={
+                  agentBusy
+                  || pairingCode.trim().length < 10
+                  || !isCertificateFingerprintValid(fingerprint)
+                }
+              >
+                {agentBusy ? 'Pairing...' : 'Pair securely'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {shutdownIndex !== null && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="shutdown-agent-title">
+            <h2 id="shutdown-agent-title">Shut down {cfg.clients[shutdownIndex].name}?</h2>
+            <p className="desc">
+              The agent will schedule a real system power-off. Type the exact device name to confirm.
+            </p>
+            <div className="field">
+              <label>Device name</label>
+              <input value={shutdownConfirmation} onChange={e => setShutdownConfirmation(e.target.value)} autoFocus />
+            </div>
+            <div className="toolbar modal-actions">
+              <button
+                className="btn btn-ghost"
+                onClick={() => setShutdownIndex(null)}
+                disabled={agentBusy}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-danger"
+                onClick={runShutdown}
+                disabled={
+                  agentBusy
+                  || !isShutdownConfirmationValid(
+                    cfg.clients[shutdownIndex].name,
+                    shutdownConfirmation,
+                  )
+                }
+              >
+                {agentBusy ? 'Sending...' : 'Shut down device'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

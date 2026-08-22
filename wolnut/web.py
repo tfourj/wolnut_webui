@@ -727,6 +727,8 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             raise HTTPException(status_code=400, detail="Device name confirmation does not match")
         raw = _read_config_or_default()
         client = _find_client(raw, client_name)
+        if client.get("enabled", True) is False:
+            raise HTTPException(status_code=409, detail="Client is disabled")
         agent_id = (client.get("shutdown", {}) or {}).get("agent_id")
         if not agent_id:
             raise HTTPException(status_code=409, detail="Client agent is not paired")

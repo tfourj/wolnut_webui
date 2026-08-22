@@ -19,6 +19,15 @@ export interface ClientConfig {
   mac: string
   always_wake?: boolean
   enabled?: boolean
+  wake_enabled?: boolean
+  shutdown: ShutdownConfig
+}
+
+export interface ShutdownConfig {
+  enabled: boolean
+  battery_percent: number
+  agent_id?: string | null
+  agent_port: number
 }
 
 export interface WebUIConfig {
@@ -51,6 +60,8 @@ export interface NotificationEventsConfig {
   wake_sent: boolean
   client_recovered: boolean
   errors: boolean
+  shutdown_acknowledged: boolean
+  shutdown_failed: boolean
 }
 
 export interface NotificationsConfig {
@@ -88,7 +99,12 @@ async function authFetch(url: string, opts: RequestInit = {}) {
   return fetch(url, { ...opts, headers })
 }
 
-export async function getAuthStatus(): Promise<{ auth_enabled: boolean; user?: string | null }> {
+export async function getAuthStatus(): Promise<{
+  auth_enabled: boolean
+  user?: string | null
+  shutdown_admin_configured: boolean
+  secure_transport: boolean
+}> {
   const res = await fetch('/api/auth/status')
   if (!res.ok) throw new Error(await res.text())
   return res.json()
@@ -189,4 +205,46 @@ export async function testNotification(
     throw new Error(body?.detail || `Failed to test ${provider}`)
   }
   return res.json() as Promise<{ status: string; provider: string }>
+}
+
+async function agentRequest(path: string, payload?: unknown) {
+  const res = await authFetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload ?? {}),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new Error(body?.detail || 'Agent request failed')
+  }
+  return res.json()
+}
+
+export function pairAgent(
+  clientName: string,
+  agentPort: number,
+  pairingCode: string,
+  fingerprint: string,
+) {
+  return agentRequest('/api/agents/pair', {
+    client_name: clientName,
+    agent_port: agentPort,
+    pairing_code: pairingCode,
+    fingerprint,
+  })
+}
+
+export function testAgent(clientName: string) {
+  return agentRequest(`/api/agents/${encodeURIComponent(clientName)}/test`)
+}
+
+export function shutdownAgent(clientName: string, confirmation: string) {
+  return agentRequest(`/api/agents/${encodeURIComponent(clientName)}/shutdown`, { confirmation })
+}
+
+export function unpairAgent(clientName: string, confirmation: string, forceLocal = false) {
+  return agentRequest(`/api/agents/${encodeURIComponent(clientName)}/unpair`, {
+    confirmation,
+    force_local: forceLocal,
+  })
 }
