@@ -832,7 +832,10 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                 status_code=409,
                 detail="Unpair the existing agent before creating an install command",
             )
-        created = enrollment_store.create(req.client_name, req.agent_port)
+        try:
+            created = enrollment_store.create(req.client_name, req.agent_port)
+        except EnrollmentError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
         try:
             command = build_agent_install_command(
                 _public_url(request), created["token"], req.agent_port

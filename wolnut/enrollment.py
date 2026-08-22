@@ -64,9 +64,18 @@ class EnrollmentStore:
         with self._lock:
             records = self._read_unlocked()
             for record in records.values():
-                if record.get("client_name") == client_name and record.get(
-                    "status"
-                ) in {"pending", "processing"}:
+                if record.get("client_name") != client_name:
+                    continue
+                if int(record.get("expires_at", 0)) < now and record.get("status") in {
+                    "pending",
+                    "processing",
+                }:
+                    record["status"] = "expired"
+                elif record.get("status") == "processing":
+                    raise EnrollmentError(
+                        "An agent enrollment is already in progress for this client"
+                    )
+                elif record.get("status") == "pending":
                     record["status"] = "superseded"
             records[enrollment_id] = {
                 "client_name": client_name,
@@ -95,6 +104,10 @@ class EnrollmentStore:
             for enrollment_id, record in records.items():
                 if not hmac.compare_digest(record.get("token_hash", ""), token_hash):
                     continue
+                if now > int(record.get("expires_at", 0)):
+                    record["status"] = "expired"
+                    self._write_unlocked(records)
+                    raise EnrollmentError("Enrollment token has expired")
                 if record.get("status") != "pending":
                     same_agent = (
                         agent_id
@@ -105,10 +118,6 @@ class EnrollmentStore:
                     if record.get("status") in {"processing", "paired"} and same_agent:
                         return enrollment_id, dict(record)
                     raise EnrollmentError("Enrollment token has already been used")
-                if now > int(record.get("expires_at", 0)):
-                    record["status"] = "expired"
-                    self._write_unlocked(records)
-                    raise EnrollmentError("Enrollment token has expired")
                 record["status"] = "processing"
                 record["claimed_agent_id"] = agent_id or None
                 record["claimed_csr_hash"] = csr_hash or None
@@ -149,8 +158,8 @@ class EnrollmentStore:
             result = {
                 key: value for key, value in record.items() if key != "token_hash"
             }
-            if result.get("status") == "pending" and int(time.time()) > int(
-                result.get("expires_at", 0)
-            ):
+            if result.get("status") in {"pending", "processing"} and int(
+                time.time()
+            ) > int(result.get("expires_at", 0)):
                 result["status"] = "expired"
             return result

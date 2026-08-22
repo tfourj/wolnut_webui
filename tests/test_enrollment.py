@@ -71,3 +71,23 @@ def test_same_agent_can_retry_after_response_loss(tmp_path):
     assert second == first
     with pytest.raises(EnrollmentError, match="already been used"):
         store.claim(created["token"], agent_id="other", csr_hash="other-csr")
+
+
+def test_active_enrollment_cannot_be_superseded(tmp_path):
+    store = EnrollmentStore(tmp_path / "security")
+    created = store.create("server", 8184)
+    store.claim(created["token"], agent_id="agent", csr_hash="csr-hash")
+
+    with pytest.raises(EnrollmentError, match="already in progress"):
+        store.create("server", 9191)
+
+
+def test_enrollment_retry_cannot_outlive_original_expiry(tmp_path, mocker):
+    clock = mocker.patch("wolnut.enrollment.time.time", return_value=100)
+    store = EnrollmentStore(tmp_path / "security")
+    created = store.create("server", 8184, lifetime_seconds=10)
+    store.claim(created["token"], agent_id="agent", csr_hash="csr-hash")
+    clock.return_value = 111
+
+    with pytest.raises(EnrollmentError, match="expired"):
+        store.claim(created["token"], agent_id="agent", csr_hash="csr-hash")
