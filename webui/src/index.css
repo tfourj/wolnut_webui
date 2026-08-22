@@ -306,6 +306,25 @@ a:hover { text-decoration: underline; }
   background: var(--bg);
 }
 
+.agent-version-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.agent-version-row strong { color: var(--text); }
+
+.badge.update-available {
+  border-color: #a66b16;
+  color: #f1c40f;
+}
+
+.update-error { color: #ff6b6b; }
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

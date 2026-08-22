@@ -283,6 +283,14 @@ export function testAgent(clientName: string) {
   return agentRequest(`/api/agents/${encodeURIComponent(clientName)}/test`)
 }
 
+export function requestAgentUpdate(clientName: string) {
+  return agentRequest(`/api/agents/${encodeURIComponent(clientName)}/update`, {})
+}
+
+export function setAgentAutoUpdate(clientName: string, enabled: boolean) {
+  return agentRequest(`/api/agents/${encodeURIComponent(clientName)}/auto-update`, { enabled })
+}
+
 export function shutdownAgent(clientName: string, confirmation: string) {
   return agentRequest(`/api/agents/${encodeURIComponent(clientName)}/shutdown`, { confirmation })
 }

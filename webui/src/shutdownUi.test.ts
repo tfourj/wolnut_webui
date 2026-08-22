@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  isAgentUpdateAvailable,
   isCertificateFingerprintValid,
   isEnrollmentTerminal,
   isShutdownConfirmationValid,
@@ -44,5 +45,12 @@ describe('secure shutdown UI guards', () => {
     expect(isEnrollmentTerminal('paired')).toBe(true)
     expect(isEnrollmentTerminal('failed')).toBe(true)
     expect(isEnrollmentTerminal('expired')).toBe(true)
+  })
+
+  it('detects only newer stable agent versions', () => {
+    expect(isAgentUpdateAvailable('1.2.3', '1.3.0')).toBe(true)
+    expect(isAgentUpdateAvailable('1.2.3', '1.2.3')).toBe(false)
+    expect(isAgentUpdateAvailable('1.2.3', '1.2.2')).toBe(false)
+    expect(isAgentUpdateAvailable('dev', '1.3.0')).toBe(false)
   })
 })

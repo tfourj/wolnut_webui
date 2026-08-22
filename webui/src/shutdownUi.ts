@@ -27,3 +27,17 @@ export function normalizeShutdownClient(client: ClientConfig): ClientConfig {
 export function isEnrollmentTerminal(status: AgentEnrollmentStatus['status']): boolean {
   return ['paired', 'failed', 'expired', 'superseded'].includes(status)
 }
+
+export function isAgentUpdateAvailable(current?: string, latest?: string): boolean {
+  const parse = (value?: string) => {
+    if (!value || !/^\d+\.\d+\.\d+$/.test(value)) return null
+    return value.split('.').map(Number)
+  }
+  const currentParts = parse(current)
+  const latestParts = parse(latest)
+  if (!currentParts || !latestParts) return false
+  for (let index = 0; index < currentParts.length; index += 1) {
+    if (latestParts[index] !== currentParts[index]) return latestParts[index] > currentParts[index]
+  }
+  return false
+}

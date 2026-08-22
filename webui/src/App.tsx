@@ -12,10 +12,12 @@ import {
   login as apiLogin,
   pairAgent,
   pingHost,
+  requestAgentUpdate,
   resolveMac,
   saveConfig,
   sendWol,
   sendWolClient,
+  setAgentAutoUpdate,
   shutdownAgent,
   testAgent,
   testNotification,
@@ -26,6 +28,7 @@ import {
   WolnutConfig,
 } from './api'
 import {
+  isAgentUpdateAvailable,
   isCertificateFingerprintValid,
   isEnrollmentTerminal,
   isShutdownConfirmationValid,
@@ -1261,6 +1264,57 @@ function ClientsTab({
     }
   }
 
+  const pollAgentUpdate = async (clientName: string) => {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await new Promise(resolve => window.setTimeout(resolve, 1500))
+      try {
+        const result = await testAgent(clientName)
+        if (!['checking', 'restart_pending'].includes(String(result.update_status || ''))) {
+          await reload()
+          if (result.update_status === 'updated') {
+            showToast(`${clientName} updated to agent ${result.version}`)
+          } else if (result.update_status === 'up_to_date') {
+            showToast(`${clientName} already has the latest agent ${result.version}`)
+          } else if (result.update_status === 'failed') {
+            showToast(`Agent update failed: ${result.last_update_error || 'unknown error'}`)
+          }
+          return
+        }
+      } catch {
+        // A short connection failure is expected while systemd restarts the agent.
+      }
+    }
+    await reload()
+    showToast(`Update check is still running for ${clientName}`)
+  }
+
+  const runAgentUpdate = async (clientName: string) => {
+    setAgentBusy(true)
+    try {
+      await requestAgentUpdate(clientName)
+      showToast(`Checking for an agent update on ${clientName}`)
+      await pollAgentUpdate(clientName)
+    } catch (error: any) {
+      showToast(`Agent update failed: ${String(error.message || error)}`)
+    } finally {
+      setAgentBusy(false)
+    }
+  }
+
+  const toggleAgentAutoUpdate = async (clientName: string, enabled: boolean) => {
+    setAgentBusy(true)
+    try {
+      await setAgentAutoUpdate(clientName, enabled)
+      await reload()
+      showToast(`Automatic agent updates ${enabled ? 'enabled' : 'disabled'} for ${clientName}`)
+      if (enabled) await pollAgentUpdate(clientName)
+    } catch (error: any) {
+      showToast(`Could not change automatic updates: ${String(error.message || error)}`)
+    } finally {
+      setAgentBusy(false)
+    }
+  }
+
   return (
     <div className="card">
       {!shutdownAdminReady && (
@@ -1295,7 +1349,9 @@ function ClientsTab({
         const w = warningMap.get(c.name)
         const isDisabled = c.enabled === false
         const agentStatus = statusMap.get(c.name)?.shutdown
+        const agentDetails = agentStatus?.last_result || {}
         const isPaired = !!c.shutdown.agent_id
+        const updateAvailable = isAgentUpdateAvailable(agentDetails.version, agentDetails.latest_version)
         return (
           <div
             key={idx}
@@ -1460,16 +1516,37 @@ function ClientsTab({
                 </span>
               </div>
 
-              {agentStatus?.last_result && Object.keys(agentStatus.last_result).length > 0 && (
+              {Object.keys(agentDetails).length > 0 && (
                 <div className="agent-result">
-                  Last result: {agentStatus.last_result.status || 'unknown'}
-                  {agentStatus.last_result.last_error ? ` · ${agentStatus.last_result.last_error}` : ''}
-                  {agentStatus.last_result.version ? ` · agent ${agentStatus.last_result.version}` : ''}
-                  {agentStatus.last_result.certificate_expires_at
+                  Last result: {agentDetails.status || 'unknown'}
+                  {agentDetails.last_error ? ` · ${agentDetails.last_error}` : ''}
+                  {agentDetails.certificate_expires_at
                     ? ` · certificate expires ${new Date(
-                      agentStatus.last_result.certificate_expires_at * 1000,
+                      agentDetails.certificate_expires_at * 1000,
                     ).toLocaleDateString()}`
                     : ''}
+                </div>
+              )}
+
+              {isPaired && (
+                <div className="agent-version-row">
+                  <span>
+                    Installed version: <strong>{agentDetails.version || 'unknown'}</strong>
+                  </span>
+                  {agentDetails.latest_version && (
+                    <span>
+                      Latest version: <strong>{agentDetails.latest_version}</strong>
+                    </span>
+                  )}
+                  {updateAvailable && <span className="badge update-available">Update available</span>}
+                  {agentDetails.update_status && (
+                    <span className="badge">
+                      Update: {String(agentDetails.update_status).replaceAll('_', ' ')}
+                    </span>
+                  )}
+                  {agentDetails.last_update_error && (
+                    <span className="update-error">{agentDetails.last_update_error}</span>
+                  )}
                 </div>
               )}
 
@@ -1494,6 +1571,15 @@ function ClientsTab({
                     onChange={event => updateShutdown(idx, { battery_percent: Number(event.target.value) })}
                   />
                 </div>
+                <label className="switch-label shutdown-toggle">
+                  <input
+                    type="checkbox"
+                    checked={c.shutdown.auto_update}
+                    disabled={!isPaired || isDirty || !shutdownAdminReady || agentBusy}
+                    onChange={event => toggleAgentAutoUpdate(c.name, event.target.checked)}
+                  />
+                  Automatic agent updates
+                </label>
               </div>
 
               <div className="toolbar">
@@ -1541,6 +1627,13 @@ function ClientsTab({
                       }}
                     >
                       Test connection
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-small"
+                      disabled={isDirty || !shutdownAdminReady || agentBusy}
+                      onClick={() => runAgentUpdate(c.name)}
+                    >
+                      Check for update
                     </button>
                     <button
                       className="btn btn-danger btn-small"
