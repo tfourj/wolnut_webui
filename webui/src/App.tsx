@@ -69,6 +69,7 @@ const DEFAULT_CFG: WolnutConfig = {
       errors: true,
       shutdown_acknowledged: true,
       shutdown_failed: true,
+      agent_update_succeeded: false,
     },
   },
 }
@@ -816,6 +817,12 @@ function NotificationsTab({
             description="Wolnut cannot deliver a shutdown request"
             checked={notifications.events.shutdown_failed}
             onChange={enabled => setEvent('shutdown_failed', enabled)}
+          />
+          <NotificationEventToggle
+            label="Agent update installed"
+            description="An automatic agent update completes successfully"
+            checked={notifications.events.agent_update_succeeded}
+            onChange={enabled => setEvent('agent_update_succeeded', enabled)}
           />
         </div>
       </div>

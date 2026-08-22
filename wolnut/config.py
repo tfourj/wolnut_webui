@@ -92,6 +92,7 @@ class NotificationEventsConfig:
     errors: bool = True
     shutdown_acknowledged: bool = True
     shutdown_failed: bool = True
+    agent_update_succeeded: bool = False
 
 
 @dataclass

@@ -526,6 +526,7 @@ def _create_default_config(config_path: str, status_file: str | None = None) -> 
                 "errors": True,
                 "shutdown_acknowledged": True,
                 "shutdown_failed": True,
+                "agent_update_succeeded": False,
             },
         },
     }

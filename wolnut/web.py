@@ -153,6 +153,7 @@ class NotificationEventsModel(BaseModel):
     errors: bool = True
     shutdown_acknowledged: bool = True
     shutdown_failed: bool = True
+    agent_update_succeeded: bool = False
 
 
 class NotificationsConfigModel(BaseModel):
@@ -529,6 +530,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                         "errors": True,
                         "shutdown_acknowledged": True,
                         "shutdown_failed": True,
+                        "agent_update_succeeded": False,
                     },
                 },
             }
@@ -574,16 +576,17 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         }.items():
             raw["notifications"]["ntfy"].setdefault(key, value)
         raw["notifications"].setdefault("events", {})
-        for key in (
-            "power_loss",
-            "power_restored",
-            "wake_sent",
-            "client_recovered",
-            "errors",
-            "shutdown_acknowledged",
-            "shutdown_failed",
-        ):
-            raw["notifications"]["events"].setdefault(key, True)
+        for key, value in {
+            "power_loss": True,
+            "power_restored": True,
+            "wake_sent": True,
+            "client_recovered": True,
+            "errors": True,
+            "shutdown_acknowledged": True,
+            "shutdown_failed": True,
+            "agent_update_succeeded": False,
+        }.items():
+            raw["notifications"]["events"].setdefault(key, value)
         for c in raw.get("clients", []) or []:
             c.setdefault("always_wake", False)
             c.setdefault("enabled", True)

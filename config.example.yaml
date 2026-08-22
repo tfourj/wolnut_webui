@@ -41,6 +41,7 @@ notifications:
     errors: true
     shutdown_acknowledged: true
     shutdown_failed: true
+    agent_update_succeeded: false
 
 clients:
   - name: "client 1"                  # Human-readable name

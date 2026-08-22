@@ -131,6 +131,7 @@ def test_load_config_notifications(mocker, minimal_config_dict):
     assert cfg.notifications.ntfy.priority == 4
     assert cfg.notifications.events.power_loss is False
     assert cfg.notifications.events.wake_sent is True
+    assert cfg.notifications.events.agent_update_succeeded is False
 
 
 def test_load_config_file_not_found(mocker):

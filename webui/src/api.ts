@@ -63,6 +63,7 @@ export interface NotificationEventsConfig {
   errors: boolean
   shutdown_acknowledged: boolean
   shutdown_failed: boolean
+  agent_update_succeeded: boolean
 }
 
 export interface NotificationsConfig {
