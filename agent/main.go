@@ -748,18 +748,37 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
 }
 
+func certificateForState(state *persistedState) (*tls.Certificate, error) {
+	certPEM, keyPEM := state.BootstrapCertPEM, state.BootstrapKeyPEM
+	if state.ServerCertPEM != "" {
+		certPEM, keyPEM = state.ServerCertPEM, state.ServerKeyPEM
+	}
+	certificate, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		return nil, err
+	}
+	return &certificate, nil
+}
+
 func (s *server) tlsConfig() *tls.Config {
 	return &tls.Config{
 		MinVersion: tls.VersionTLS13,
+		// Go 1.22's ServeTLS startup check does not count GetConfigForClient as
+		// a certificate source, so keep this compatible dynamic fallback.
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			state, err := s.store.load()
+			if err != nil {
+				return nil, err
+			}
+			return certificateForState(state)
+		},
 		GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
 			state, err := s.store.load()
 			if err != nil {
 				return nil, err
 			}
-			certPEM, keyPEM := state.BootstrapCertPEM, state.BootstrapKeyPEM
 			config := &tls.Config{MinVersion: tls.VersionTLS13, ClientAuth: tls.RequestClientCert}
 			if state.ServerCertPEM != "" {
-				certPEM, keyPEM = state.ServerCertPEM, state.ServerKeyPEM
 				pool := x509.NewCertPool()
 				if !pool.AppendCertsFromPEM([]byte(state.ControllerCAPEM)) {
 					return nil, errors.New("invalid controller CA")
@@ -767,11 +786,11 @@ func (s *server) tlsConfig() *tls.Config {
 				config.ClientCAs = pool
 				config.ClientAuth = tls.VerifyClientCertIfGiven
 			}
-			certificate, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+			certificate, err := certificateForState(state)
 			if err != nil {
 				return nil, err
 			}
-			config.Certificates = []tls.Certificate{certificate}
+			config.Certificates = []tls.Certificate{*certificate}
 			return config, nil
 		},
 	}

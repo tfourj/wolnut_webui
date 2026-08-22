@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -693,6 +694,45 @@ func TestProtocolRequiresMutualTLSOnLoopback(t *testing.T) {
 	}
 	if status := requestStatus([]tls.Certificate{controllerCertificate}); status != http.StatusOK {
 		t.Fatalf("expected authenticated request to succeed, got %d", status)
+	}
+}
+
+func TestDynamicCertificateStartsServeTLSWithoutCertificateFiles(t *testing.T) {
+	s := &store{dir: t.TempDir()}
+	if _, err := s.initialize(); err != nil {
+		t.Fatal(err)
+	}
+	service := &server{store: s, poweroff: &fakePoweroff{}}
+	config := service.tlsConfig()
+	if config.GetCertificate == nil {
+		t.Fatal("dynamic certificate fallback is required for Go 1.22 ServeTLS")
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpServer := &http.Server{Handler: service.routes(), TLSConfig: config}
+	serveResult := make(chan error, 1)
+	go func() {
+		serveResult <- httpServer.ServeTLS(listener, "", "")
+	}()
+	defer func() {
+		_ = httpServer.Close()
+		if err := <-serveResult; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("ServeTLS failed: %v", err)
+		}
+	}()
+
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
+		MinVersion: tls.VersionTLS13, InsecureSkipVerify: true,
+	}}}
+	response, err := client.Get("https://" + listener.Addr().String() + "/v1/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected unpaired response, got %d", response.StatusCode)
 	}
 }
 
