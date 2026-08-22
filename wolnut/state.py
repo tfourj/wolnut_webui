@@ -74,6 +74,8 @@ class ClientStateTracker:
             "battery_percent": None,
             "source": None,
             "failure_notified": False,
+            "offline_after_ack": False,
+            "delivery_sequence": 0,
         }
 
     @staticmethod
@@ -99,7 +101,9 @@ class ClientStateTracker:
             self._meta_state.update(save_data["meta"])
             self._client_states = save_data.get("clients", {})
             for client_state in self._client_states.values():
-                client_state.setdefault("shutdown", self._new_shutdown_state())
+                shutdown = self._new_shutdown_state()
+                shutdown.update(client_state.get("shutdown", {}))
+                client_state["shutdown"] = shutdown
                 client_state.setdefault("agent_update", self._new_agent_update_state())
             self._status_hash = status_hash
             logger.info("State loaded from %s", self._status_file)
@@ -153,12 +157,31 @@ class ClientStateTracker:
         logger.debug("State saved to %s", self._status_file)
 
     def update(self, client_name: str, online: bool):
-        if (
-            client_name in self._client_states
-            and self._client_states[client_name]["is_online"] != online
+        if client_name not in self._client_states:
+            return
+        state = self._client_states[client_name]
+        was_online = state["is_online"]
+        if was_online == online:
+            return
+
+        state["is_online"] = online
+        shutdown = state.setdefault("shutdown", self._new_shutdown_state())
+        if shutdown.get("acknowledged") and was_online and not online:
+            shutdown["offline_after_ack"] = True
+        elif (
+            shutdown.get("acknowledged")
+            and not was_online
+            and online
+            and shutdown.get("offline_after_ack")
         ):
-            self._client_states[client_name]["is_online"] = online
-            self._dirty = True
+            delivery_sequence = int(shutdown.get("delivery_sequence", 0) or 0) + 1
+            state["shutdown"] = self._new_shutdown_state()
+            state["shutdown"]["delivery_sequence"] = delivery_sequence
+            logger.info(
+                "Re-arming shutdown for %s after it came back online during the outage",
+                client_name,
+            )
+        self._dirty = True
 
     def mark_wol_sent(self, client_name: str):
         if client_name in self._client_states:

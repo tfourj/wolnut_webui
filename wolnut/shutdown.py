@@ -62,7 +62,10 @@ class ShutdownCoordinator:
                 continue
 
             previous = state_tracker.shutdown_state(client.name)
-            command_id = previous.get("command_id") or f"{outage_id}:{client.name}"
+            sequence = int(previous.get("delivery_sequence", 0) or 0)
+            command_id = previous.get("command_id") or (
+                f"{outage_id}:{client.name}:{sequence}"
+            )
             agent = AgentClient(
                 client.host,
                 shutdown.agent_port,

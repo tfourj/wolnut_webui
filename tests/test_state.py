@@ -251,6 +251,41 @@ def test_new_outage_resets_shutdown_delivery_state(tracker):
     assert tracker.shutdown_state("client-1")["command_id"] is None
 
 
+def test_shutdown_rearms_after_acknowledged_client_goes_offline_then_online(tracker):
+    tracker.begin_outage(20)
+    tracker.update("client-1", True)
+    tracker.record_shutdown_attempt("client-1", "first", 20, "automatic")
+    tracker.acknowledge_shutdown("client-1")
+
+    tracker.update("client-1", False)
+    offline_state = tracker.shutdown_state("client-1")
+    assert offline_state["acknowledged"] is True
+    assert offline_state["offline_after_ack"] is True
+
+    tracker.update("client-1", True)
+    restarted_state = tracker.shutdown_state("client-1")
+    assert restarted_state["acknowledged"] is False
+    assert restarted_state["command_id"] is None
+    assert restarted_state["delivery_sequence"] == 1
+
+
+def test_shutdown_rearm_survives_controller_restart(clients, tmp_path):
+    state_file = tmp_path / "wolnut_state.json"
+    tracker = state.ClientStateTracker(clients, status_file=str(state_file))
+    tracker.update("client-1", True)
+    tracker.begin_outage(20)
+    tracker.record_shutdown_attempt("client-1", "first", 20, "automatic")
+    tracker.acknowledge_shutdown("client-1")
+    tracker.update("client-1", False)
+    tracker.save_state()
+
+    restored = state.ClientStateTracker(clients, status_file=str(state_file))
+    restored.update("client-1", True)
+
+    assert restored.shutdown_state("client-1")["acknowledged"] is False
+    assert restored.shutdown_state("client-1")["delivery_sequence"] == 1
+
+
 def test_save_state_json_serialization_error(tracker, mocker, caplog):
     """Tests that an error is logged if JSON serialization fails during save."""
     mocker.patch("wolnut.state.json.dumps", side_effect=TypeError("Test error"))

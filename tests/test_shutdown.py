@@ -85,6 +85,33 @@ def test_failed_shutdown_retries_with_same_id_and_notifies_once(tmp_path, mocker
     assert tracker.shutdown_state("server")["acknowledged"] is True
 
 
+def test_restarted_client_receives_new_shutdown_during_same_outage(tmp_path, mocker):
+    client = ClientConfig(
+        "server",
+        "server.local",
+        shutdown=ShutdownConfig(True, 20, "agent-server", 8184),
+    )
+    tracker = ClientStateTracker([client], str(tmp_path / "state.json"))
+    tracker.update("server", True)
+    tracker.begin_outage(20)
+    agent = mocker.patch("wolnut.shutdown.AgentClient").return_value
+    agent.shutdown.return_value = {"status": "accepted"}
+    coordinator = ShutdownCoordinator()
+
+    coordinator.process_on_battery(_config([client]), tracker, mocker.Mock(), 20)
+    first_id = agent.shutdown.call_args.args[1]
+    coordinator.process_on_battery(_config([client]), tracker, mocker.Mock(), 19)
+    agent.shutdown.assert_called_once()
+
+    tracker.update("server", False)
+    tracker.update("server", True)
+    coordinator.process_on_battery(_config([client]), tracker, mocker.Mock(), 18)
+
+    assert agent.shutdown.call_count == 2
+    assert agent.shutdown.call_args.args[1] != first_id
+    assert tracker.shutdown_state("server")["acknowledged"] is True
+
+
 def test_disabled_and_unpaired_clients_never_shutdown(tmp_path, mocker):
     clients = [
         ClientConfig(
