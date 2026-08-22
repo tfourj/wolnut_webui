@@ -16,7 +16,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -28,6 +30,52 @@ type fakePoweroff struct{ calls atomic.Int32 }
 func (f *fakePoweroff) Poweroff() error {
 	f.calls.Add(1)
 	return nil
+}
+
+func TestLifecycleScriptsAreValidShell(t *testing.T) {
+	for _, script := range []string{"install.sh", "uninstall.sh"} {
+		if output, err := exec.Command("/bin/sh", "-n", script).CombinedOutput(); err != nil {
+			t.Fatalf("%s is invalid: %s", script, output)
+		}
+		if output, err := exec.Command("/bin/sh", script, "--help").CombinedOutput(); err != nil {
+			t.Fatalf("%s help failed: %s", script, output)
+		}
+	}
+}
+
+func TestInstallScriptDoesNotRequireSudoForRoot(t *testing.T) {
+	path := t.TempDir()
+	idPath := filepath.Join(path, "id")
+	if err := os.WriteFile(idPath, []byte("#!/bin/sh\necho 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("/bin/sh", "install.sh")
+	command.Env = []string{"PATH=" + path}
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatal("install unexpectedly succeeded without download tools")
+	}
+	message := string(output)
+	if strings.Contains(message, "sudo is not installed") || !strings.Contains(message, "Required command not found") {
+		t.Fatalf("root privilege detection failed: %s", message)
+	}
+}
+
+func TestInstallScriptExplainsMissingSudoForNonRoot(t *testing.T) {
+	path := t.TempDir()
+	idPath := filepath.Join(path, "id")
+	if err := os.WriteFile(idPath, []byte("#!/bin/sh\necho 1000\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("/bin/sh", "install.sh")
+	command.Env = []string{"PATH=" + path}
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatal("non-root install unexpectedly succeeded without sudo")
+	}
+	if !strings.Contains(string(output), "sudo is not installed") {
+		t.Fatalf("missing sudo guidance: %s", output)
+	}
 }
 
 func TestStoreUsesPrivatePermissions(t *testing.T) {
