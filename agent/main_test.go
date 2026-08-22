@@ -425,6 +425,7 @@ func TestUpdatePolicyIsPersistedAndStartsCheck(t *testing.T) {
 	}
 	updater := &fakeUpdater{result: updateResult{Status: "up_to_date", LatestVersion: "1.2.3"}}
 	service := &server{store: s, updater: updater}
+	defer service.stopAutoUpdateScheduler()
 	request := httptest.NewRequest(http.MethodPost, "/v1/update-policy", strings.NewReader(`{"enabled":true}`))
 	response := httptest.NewRecorder()
 
@@ -443,6 +444,49 @@ func TestUpdatePolicyIsPersistedAndStartsCheck(t *testing.T) {
 	}
 	if !state.AutoUpdate || updater.calls.Load() != 1 || state.UpdateStatus != "up_to_date" {
 		t.Fatalf("update policy was not applied: %+v, calls=%d", state, updater.calls.Load())
+	}
+	service.autoUpdateMu.Lock()
+	scheduled := service.autoUpdateStop != nil
+	service.autoUpdateMu.Unlock()
+	if !scheduled {
+		t.Fatal("automatic update scheduler was not started")
+	}
+
+	disableRequest := httptest.NewRequest(http.MethodPost, "/v1/update-policy", strings.NewReader(`{"enabled":false}`))
+	disableResponse := httptest.NewRecorder()
+	service.handleUpdatePolicy(disableResponse, disableRequest)
+	if disableResponse.Code != http.StatusOK {
+		t.Fatalf("unexpected disable response %d: %s", disableResponse.Code, disableResponse.Body.String())
+	}
+	service.autoUpdateMu.Lock()
+	scheduled = service.autoUpdateStop != nil
+	service.autoUpdateMu.Unlock()
+	if scheduled {
+		t.Fatal("automatic update scheduler was not stopped")
+	}
+}
+
+func TestAutoUpdateSchedulerChecksAfterInitialDelay(t *testing.T) {
+	s := &store{dir: t.TempDir()}
+	state, err := s.initialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.AutoUpdate = true
+	if err := s.save(state); err != nil {
+		t.Fatal(err)
+	}
+	updater := &fakeUpdater{result: updateResult{Status: "up_to_date", LatestVersion: "1.2.3"}}
+	service := &server{store: s, updater: updater}
+	defer service.stopAutoUpdateScheduler()
+
+	service.startAutoUpdateScheduler(time.Millisecond)
+	deadline := time.Now().Add(time.Second)
+	for updater.calls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if updater.calls.Load() != 1 {
+		t.Fatalf("expected scheduled update check, got %d", updater.calls.Load())
 	}
 }
 

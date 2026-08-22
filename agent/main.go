@@ -258,12 +258,14 @@ func (executor systemdPoweroff) Poweroff() error {
 }
 
 type server struct {
-	store         *store
-	poweroff      poweroffExecutor
-	shutdownDelay time.Duration
-	updater       updateExecutor
-	updateMu      sync.Mutex
-	updateRunning bool
+	store          *store
+	poweroff       poweroffExecutor
+	shutdownDelay  time.Duration
+	updater        updateExecutor
+	updateMu       sync.Mutex
+	updateRunning  bool
+	autoUpdateMu   sync.Mutex
+	autoUpdateStop chan struct{}
 }
 
 func (s *server) routes() http.Handler {
@@ -533,7 +535,10 @@ func (s *server) handleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "configured", "auto_update": request.Enabled})
 	if request.Enabled {
+		s.startAutoUpdateScheduler(6 * time.Hour)
 		s.startUpdate()
+	} else {
+		s.stopAutoUpdateScheduler()
 	}
 }
 
@@ -604,17 +609,49 @@ func (s *server) finishUpdate() {
 	s.updateMu.Unlock()
 }
 
-func (s *server) runAutoUpdates() {
-	ticker := time.NewTicker(6 * time.Hour)
-	defer ticker.Stop()
-	time.Sleep(time.Minute)
-	for {
-		state, err := s.store.load()
-		if err != nil || !state.AutoUpdate {
-			return
+func (s *server) startAutoUpdateScheduler(firstCheck time.Duration) {
+	s.autoUpdateMu.Lock()
+	defer s.autoUpdateMu.Unlock()
+	if s.autoUpdateStop != nil {
+		return
+	}
+	stop := make(chan struct{})
+	s.autoUpdateStop = stop
+	go s.runAutoUpdates(stop, firstCheck)
+}
+
+func (s *server) stopAutoUpdateScheduler() {
+	s.autoUpdateMu.Lock()
+	defer s.autoUpdateMu.Unlock()
+	if s.autoUpdateStop == nil {
+		return
+	}
+	close(s.autoUpdateStop)
+	s.autoUpdateStop = nil
+}
+
+func (s *server) runAutoUpdates(stop <-chan struct{}, firstCheck time.Duration) {
+	timer := time.NewTimer(firstCheck)
+	defer timer.Stop()
+	defer func() {
+		s.autoUpdateMu.Lock()
+		if s.autoUpdateStop == stop {
+			s.autoUpdateStop = nil
 		}
-		s.startUpdate()
-		<-ticker.C
+		s.autoUpdateMu.Unlock()
+	}()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-timer.C:
+			state, err := s.store.load()
+			if err != nil || !state.AutoUpdate {
+				return
+			}
+			s.startUpdate()
+			timer.Reset(6 * time.Hour)
+		}
 	}
 }
 
@@ -725,6 +762,7 @@ func (s *server) handleUnpair(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not reset pairing")
 		return
 	}
+	s.stopAutoUpdateScheduler()
 	writeJSON(w, http.StatusOK, map[string]any{"status": "unpaired"})
 }
 
@@ -1145,7 +1183,7 @@ func runServe(stateDir, listen, downloadBase string) error {
 		},
 	}
 	if state.AutoUpdate {
-		go service.runAutoUpdates()
+		service.startAutoUpdateScheduler(time.Minute)
 	}
 	httpServer := &http.Server{
 		Addr:              listen,
