@@ -102,11 +102,14 @@ def test_sign_agent_csr_requires_matching_identity(tmp_path):
 def test_controller_and_agent_certificates_have_separate_roles(tmp_path):
     security = SecurityStore(tmp_path / "security")
     identity = security.ensure_controller_identity()
+    ca = x509.load_pem_x509_certificate(identity.ca_cert.read_bytes())
     controller = x509.load_pem_x509_certificate(identity.client_cert.read_bytes())
     controller_usage = controller.extensions.get_extension_for_class(
         x509.ExtendedKeyUsage
     ).value
     assert list(controller_usage) == [ExtendedKeyUsageOID.CLIENT_AUTH]
+    assert_key_identifiers(ca, ca)
+    assert_key_identifiers(controller, ca)
 
     key = ec.generate_private_key(ec.SECP256R1())
     csr = (
@@ -126,6 +129,25 @@ def test_controller_and_agent_certificates_have_separate_roles(tmp_path):
     agent = x509.load_pem_x509_certificate(signed.encode())
     agent_usage = agent.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
     assert list(agent_usage) == [ExtendedKeyUsageOID.SERVER_AUTH]
+    assert_key_identifiers(agent, ca)
+
+
+def assert_key_identifiers(certificate, issuer):
+    subject_key_id = certificate.extensions.get_extension_for_class(
+        x509.SubjectKeyIdentifier
+    ).value
+    expected_subject_key_id = x509.SubjectKeyIdentifier.from_public_key(
+        certificate.public_key()
+    )
+    authority_key_id = certificate.extensions.get_extension_for_class(
+        x509.AuthorityKeyIdentifier
+    ).value
+    issuer_subject_key_id = issuer.extensions.get_extension_for_class(
+        x509.SubjectKeyIdentifier
+    ).value
+
+    assert subject_key_id.digest == expected_subject_key_id.digest
+    assert authority_key_id.key_identifier == issuer_subject_key_id.digest
 
 
 def test_update_operations_use_fixed_agent_endpoints(mocker):

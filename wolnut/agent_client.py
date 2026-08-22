@@ -118,6 +118,14 @@ class SecurityStore:
                 ),
                 critical=True,
             )
+            .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()),
+                critical=False,
+            )
+            .add_extension(
+                x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
+                critical=False,
+            )
             .sign(ca_key, hashes.SHA256())
         )
 
@@ -151,6 +159,14 @@ class SecurityStore:
             )
             .add_extension(
                 x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]), critical=True
+            )
+            .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(client_key.public_key()),
+                critical=False,
+            )
+            .add_extension(
+                x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
+                critical=False,
             )
             .sign(ca_key, hashes.SHA256())
         )
@@ -217,6 +233,14 @@ class SecurityStore:
             )
             .add_extension(
                 x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=True
+            )
+            .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(csr.public_key()),
+                critical=False,
+            )
+            .add_extension(
+                x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
+                critical=False,
             )
             .sign(ca_key, hashes.SHA256())
         )
