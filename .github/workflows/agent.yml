@@ -80,10 +80,38 @@ jobs:
             dist/wolnut-agent-linux-${{ matrix.arch }}.sha256
           if-no-files-found: error
 
+  scripts:
+    name: Package lifecycle scripts
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Check script syntax
+        run: |
+          sh -n agent/install.sh
+          sh -n agent/uninstall.sh
+      - name: Package scripts and checksums
+        run: |
+          mkdir -p dist
+          cp agent/install.sh agent/uninstall.sh dist/
+          cd dist
+          sha256sum install.sh > install.sh.sha256
+          sha256sum uninstall.sh > uninstall.sh.sha256
+      - name: Upload scripts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wolnut-agent-scripts
+          path: |
+            dist/install.sh
+            dist/install.sh.sha256
+            dist/uninstall.sh
+            dist/uninstall.sh.sha256
+          if-no-files-found: error
+
   release:
     name: Publish tagged agent release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, scripts]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -103,3 +131,7 @@ jobs:
             dist/wolnut-agent-linux-amd64.sha256
             dist/wolnut-agent-linux-arm64
             dist/wolnut-agent-linux-arm64.sha256
+            dist/install.sh
+            dist/install.sh.sha256
+            dist/uninstall.sh
+            dist/uninstall.sh.sha256
