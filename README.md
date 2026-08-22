@@ -38,10 +38,10 @@ This helps reboot systems automatically after a controlled shutdown caused by a 
 
 Shutdown management is opt-in per client. After saving a client, choose
 **Quick install** to generate a short-lived one-line command. Run it on the
-Linux systemd device to verify and run `install.sh`, download the matching
-checksum-verified agent, install its hardened service, and enroll it
-automatically over HTTPS. The installer runs directly for root users such as a
-default Proxmox login, and uses `sudo` only when required and available.
+Linux systemd device to fetch `install.sh` from Wolnut over HTTPS, download the
+matching checksum-verified agent, install its hardened service, and enroll it
+automatically. The installer runs directly for root users such as a default
+Proxmox login, and uses `sudo` only when required and available.
 
 Choose **Manual install** to install the daemon without an enrollment secret,
 then finish certificate-pinned pairing using the device's one-time code and

@@ -67,9 +67,10 @@ environment:
 1. Add the client in Wolnut and save the configuration.
 2. In the client's **Secure shutdown** section, choose **Quick install**.
 3. Confirm the agent port and generate the command.
-4. Copy the command and run it on the Linux device. It downloads and verifies
-   `install.sh`; the installer then detects amd64 or arm64, verifies the agent
-   binary, enrolls it, and starts the hardened systemd service.
+4. Copy the short `curl ... | sh` command and run it on the Linux device. It
+   fetches a customized `install.sh` from Wolnut over HTTPS; the installer then
+   detects amd64 or arm64, verifies the agent binary, enrolls it, and starts the
+   hardened systemd service.
 5. Keep the dialog open to see the live enrollment result. Test the connection,
    then enable **Automatic shutdown**, choose a threshold, and save.
 
@@ -78,23 +79,30 @@ default Proxmox host where `sudo` is not installed. For an unprivileged account
 it uses `sudo` when available. If neither condition applies, it explains how to
 log in as root with `su -` and rerun the same command.
 
-The command contains a 256-bit enrollment token that expires after 10 minutes.
-Wolnut stores only its SHA-256 hash, binds it to the first agent identity and
-certificate request, and invalidates older commands for the same client. Do
-not share the command while it is valid. A retry from that same agent is
-allowed if the HTTPS response was interrupted.
+The command sends a 256-bit enrollment token in the HTTPS Authorization header,
+not in the URL, and pipes the returned installer to `/bin/sh`. The token expires
+after 10 minutes. Wolnut stores only its SHA-256 hash, binds it to the first
+agent identity and certificate request, and invalidates older commands for the
+same client. Do not share the command while it is valid. A retry from that same
+agent is allowed if the HTTPS response was interrupted.
 
-No download is piped directly into a shell. The generated command verifies the
-separately downloaded installer checksum before running it, and the installer
-verifies the agent binary in the same way. Automatic enrollment does not
-enable battery shutdown by itself.
+The installer is delivered by the trusted Wolnut HTTPS origin. It downloads
+only the matching agent architecture from the configured release directory and
+verifies the separately downloaded SHA-256 file before running or installing
+the binary. Automatic enrollment does not enable battery shutdown by itself.
+
+GitHub's bare `/releases/latest/download` address is an asset prefix and may
+return 404 by itself. The installer appends an exact asset name such as
+`wolnut-agent-linux-amd64`; that complete URL is the one that must exist in the
+latest release.
 
 ## Manual installation
 
 Choose **Manual install** in the client's Secure shutdown section, select the
 port, and click **Show manual commands**. Wolnut provides separate commands to:
 
-1. Download, verify, and run `install.sh` without an enrollment secret.
+1. Fetch and run `install.sh` from Wolnut without an enrollment secret; the
+   script verifies the downloaded agent binary.
 2. Generate the one-time pairing code and certificate fingerprint on the
    device.
 3. Return to Wolnut's certificate-pinned manual pairing dialog.

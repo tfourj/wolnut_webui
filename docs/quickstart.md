@@ -64,12 +64,12 @@ are hot-reloaded, so no restart is needed.
 HTTP is sufficient for initial Wake-on-LAN configuration, but agent pairing,
 automatic shutdown settings, manual shutdown, and unpairing require HTTPS.
 For an unpaired client, choose **Quick install**, copy the generated command,
-and run it on the Linux device. The installer works directly as root on
-Proxmox and other systems without `sudo`, or uses `sudo` for an unprivileged
-account when it is available. Choose **Manual install** instead to install the
-daemon first and then complete certificate-pinned pairing with a code and
-fingerprint. Wolnut displays the live enrollment status and refreshes the
-client after pairing. Follow
+and run the short `curl ... | sh` command on the Linux device. The installer
+works directly as root on Proxmox and other systems without `sudo`, or uses
+`sudo` for an unprivileged account when it is available. Choose **Manual
+install** instead to install the daemon first and then complete
+certificate-pinned pairing with a code and fingerprint. Wolnut displays the
+live enrollment status and refreshes the client after pairing. Follow
 [Secure shutdown agent setup](agent.md) for firewall and recovery guidance.
 
 After pairing, use **Test connection** to refresh the installed agent version.
