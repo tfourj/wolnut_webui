@@ -36,11 +36,16 @@ environment:
   - ADMIN_USERNAME=admin
   - ADMIN_PASSWORD=changeme
   - WOLNUT_JWT_SECRET=change-this-to-a-long-random-secret
+  - WOLNUT_PUBLIC_URL=https://wolnut.example.com
 ```
 
 Change all three values. `WOLNUT_JWT_SECRET` must be an unpredictable value of
 at least 32 characters. Secure shutdown administration remains disabled when
 these settings are absent or weak.
+
+Set `WOLNUT_PUBLIC_URL` to the HTTPS address devices can use to reach Wolnut.
+This avoids embedding an internal proxy address in generated agent install
+commands.
 
 ## 4. Run compose
 
@@ -58,7 +63,10 @@ are hot-reloaded, so no restart is needed.
 
 HTTP is sufficient for initial Wake-on-LAN configuration, but agent pairing,
 automatic shutdown settings, manual shutdown, and unpairing require HTTPS.
-Follow [Secure shutdown agent setup](agent.md) before enabling those controls.
+For an unpaired client, choose **Quick install**, copy the generated command,
+and run it on the Linux device. Wolnut displays the live enrollment status and
+refreshes the client after pairing. Follow
+[Secure shutdown agent setup](agent.md) for firewall and recovery guidance.
 
 Optional notifications can be configured under **Notifications**. Enable a
 Discord webhook, Gotify, or ntfy provider, enter its settings, and use the

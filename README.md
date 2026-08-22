@@ -36,10 +36,12 @@ This helps reboot systems automatically after a controlled shutdown caused by a 
 
 ## Secure shutdown agents
 
-Shutdown management is opt-in per client. Install the standalone agent on a
-Linux systemd device, display a short-lived pairing code locally, and pair it
-from the client's **Secure shutdown** panel. Pairing does not enable automatic
-shutdown; choose a threshold and save the configuration afterward.
+Shutdown management is opt-in per client. After saving a client, choose
+**Quick install** to generate a short-lived one-line command. Run it on the
+Linux systemd device to download the checksum-verified agent, install its
+hardened service, and enroll it automatically over HTTPS. Certificate-pinned
+manual pairing remains available as a fallback. Pairing does not enable
+automatic shutdown; choose a threshold and save the configuration afterward.
 
 The agent accepts only status, shutdown, and unpair requests. A shutdown
 acknowledgement means the agent accepted and scheduled `systemctl poweroff`;

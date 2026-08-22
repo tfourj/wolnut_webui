@@ -13,4 +13,6 @@ services:
             - ADMIN_PASSWORD=changeme
             - WOLNUT_JWT_SECRET=change-this-to-a-long-random-secret
             #- WOLNUT_FORWARDED_ALLOW_IPS=127.0.0.1
+            #- WOLNUT_PUBLIC_URL=https://wolnut.example.com
+            #- WOLNUT_AGENT_DOWNLOAD_BASE_URL=https://github.com/tfourj/wolnut_webui/releases/latest/download
             #- WOLNUT_SECURITY_DIR=/config/security

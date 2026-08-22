@@ -316,6 +316,29 @@ def test_one_line_enrollment_requires_https(tmp_path, monkeypatch):
     assert response.status_code == 426
 
 
+def test_one_line_enrollment_rejects_insecure_download_host(tmp_path, monkeypatch):
+    config = {
+        "nut": {"ups": "ups@localhost"},
+        "clients": [
+            {
+                "name": "server",
+                "host": "server.local",
+                "mac": "00:11:22:33:44:55",
+            }
+        ],
+    }
+    monkeypatch.setenv("WOLNUT_AGENT_DOWNLOAD_BASE_URL", "http://downloads.test")
+    client, _ = _secure_app_client(tmp_path, monkeypatch, config)
+
+    response = client.post(
+        "/api/agents/enrollments",
+        json={"client_name": "server", "agent_port": 8184},
+    )
+
+    assert response.status_code == 503
+    assert "must use HTTPS" in response.json()["detail"]
+
+
 def test_invalid_enrollment_token_cannot_change_pairing(tmp_path, monkeypatch):
     config = {
         "nut": {"ups": "ups@localhost"},

@@ -8,7 +8,10 @@ environment variable from the controller.
 
 - A Linux amd64 or arm64 device running systemd
 - TCP reachability from the Wolnut host to the device, port `8184` by default
+- Outbound HTTPS from the device to Wolnut and the configured release host for
+  one-line installation
 - Administrator access on the device
+- `curl` and `sha256sum` for one-line installation
 - HTTPS access to the Wolnut WebUI
 - `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and an unpredictable
   `WOLNUT_JWT_SECRET` of at least 32 characters
@@ -39,7 +42,46 @@ environment:
 
 Never configure this setting as `*` on an untrusted network.
 
-## Install the standalone agent
+Set the public HTTPS address used by devices when enrolling:
+
+```yaml
+environment:
+  - WOLNUT_PUBLIC_URL=https://wolnut.example.com
+```
+
+The agent validates this address with the device's normal system trust store.
+For a private certificate authority, install that CA on the device. Do not
+disable TLS verification. If binaries are hosted somewhere other than the
+project's latest GitHub release, configure an HTTPS directory containing both
+architectures and their `.sha256` files:
+
+```yaml
+environment:
+  - WOLNUT_AGENT_DOWNLOAD_BASE_URL=https://downloads.example.com/wolnut
+```
+
+## One-line installation and pairing
+
+1. Add the client in Wolnut and save the configuration.
+2. In the client's **Secure shutdown** section, choose **Quick install**.
+3. Confirm the agent port and generate the command.
+4. Copy the command and run it on the Linux device. It detects amd64 or arm64,
+   downloads the binary and checksum over HTTPS, verifies the checksum, asks
+   for sudo, enrolls the agent, and starts the hardened systemd service.
+5. Keep the dialog open to see the live enrollment result. Test the connection,
+   then enable **Automatic shutdown**, choose a threshold, and save.
+
+The command contains a 256-bit enrollment token that expires after 10 minutes.
+Wolnut stores only its SHA-256 hash, binds it to the first agent identity and
+certificate request, and invalidates older commands for the same client. Do
+not share the command while it is valid. A retry from that same agent is
+allowed if the HTTPS response was interrupted.
+
+The download is never piped into a shell. Installation proceeds only after
+`sha256sum` validates the separately downloaded release checksum. Automatic
+enrollment does not enable battery shutdown by itself.
+
+## Manual installation
 
 Download the binary and matching checksum from the desired GitHub release.
 Replace `VERSION` and `ARCH` (`amd64` or `arm64`) below:
@@ -67,7 +109,7 @@ sudo ./wolnut-agent-linux-ARCH install-service --listen 192.168.1.20:9191
 
 Allow that port through the firewall only from the Wolnut controller.
 
-## Pair a client
+## Manual certificate-pinned pairing
 
 1. Add or edit the client in Wolnut. Disable **Wake on restore** if the device
    is shutdown-only, then save the configuration.
@@ -77,7 +119,7 @@ Allow that port through the firewall only from the Wolnut controller.
    sudo wolnut-agent pairing-code
    ```
 
-3. Within 10 minutes, choose **Pair agent** in the client's Secure shutdown
+3. Within 10 minutes, choose **Pair manually** in the client's Secure shutdown
    panel and enter the port, pairing code, and complete SHA-256 fingerprint.
 4. Pairing verifies the displayed fingerprint before sending the one-time code.
    Wolnut then issues role-restricted certificates and all subsequent traffic

@@ -217,7 +217,14 @@ def build_agent_install_command(public_url: str, token: str, agent_port: int) ->
         "WOLNUT_AGENT_DOWNLOAD_BASE_URL",
         "https://github.com/tfourj/wolnut_webui/releases/latest/download",
     ).rstrip("/")
-    if not download_base.startswith("https://"):
+    parsed_download = urlsplit(download_base)
+    if (
+        parsed_download.scheme != "https"
+        or not parsed_download.netloc
+        or parsed_download.username
+        or parsed_download.query
+        or parsed_download.fragment
+    ):
         raise ValueError("WOLNUT_AGENT_DOWNLOAD_BASE_URL must use HTTPS")
     enrollment_url = public_url.rstrip("/") + "/api/agents/enroll"
     quoted_base = shlex.quote(download_base)
@@ -390,7 +397,13 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             request.base_url
         ).rstrip("/")
         parsed = urlsplit(value)
-        if parsed.scheme != "https" or not parsed.netloc or parsed.username:
+        if (
+            parsed.scheme != "https"
+            or not parsed.netloc
+            or parsed.username
+            or parsed.query
+            or parsed.fragment
+        ):
             raise HTTPException(
                 status_code=503,
                 detail="WOLNUT_PUBLIC_URL must be a valid HTTPS URL",
