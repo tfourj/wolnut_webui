@@ -1,8 +1,9 @@
 # Secure shutdown agent setup
 
-Wolnut's Linux agent exposes a deliberately small API: status, shutdown, and
-unpair. It never accepts an executable path, shell command, argument list, or
-environment variable from the controller.
+Wolnut's Linux agent exposes a deliberately small API: status, shutdown, fixed
+self-update and update-policy actions, and unpair. It never accepts an
+executable path, download URL, shell command, argument list, or environment
+variable from the controller.
 
 ## Requirements
 
@@ -53,8 +54,8 @@ The agent validates this address with the device's normal system trust store.
 For a private certificate authority, install that CA on the device. Do not
 disable TLS verification. If binaries are hosted somewhere other than the
 project's latest GitHub release, configure an HTTPS directory containing
-`install.sh`, `uninstall.sh`, both agent architectures, and every matching
-`.sha256` file:
+`install.sh`, `uninstall.sh`, `agent-release.json`, both agent architectures,
+and every matching `.sha256` file:
 
 ```yaml
 environment:
@@ -98,10 +99,12 @@ port, and click **Show manual commands**. Wolnut provides separate commands to:
    device.
 3. Return to Wolnut's certificate-pinned manual pairing dialog.
 
-The installer copies the agent to `/usr/local/bin/wolnut-agent`, creates a
-hardened root systemd service, and starts it on the selected port. Agent state
-and private keys are stored in `/var/lib/wolnut-agent/state.json` with root-only
-permissions. The local listen configuration is stored in
+The installer stores the service binary at
+`/var/lib/wolnut-agent/wolnut-agent`, links
+`/usr/local/bin/wolnut-agent` to it, creates a hardened root systemd service,
+and starts it on the selected port. Agent state and private keys are stored in
+`/var/lib/wolnut-agent/state.json` with root-only permissions. The local listen
+and release-source configuration is stored in
 `/etc/wolnut-agent/agent.env`; edit it only as root, then restart
 `wolnut-agent`.
 
@@ -141,6 +144,38 @@ when you also want to permanently remove that data.
 Like the installer, the uninstaller runs directly as root and falls back to
 `sudo` only when needed and available.
 
+## Version display and updates
+
+After pairing or a successful **Test connection**, each client card displays
+the installed agent version. Once the agent has checked its configured release
+source, the card also shows the latest version, update status, and any safe,
+redacted error.
+
+Choose **Check for update** for an immediate check, or enable **Automatic agent
+updates** for that device. Enabling the toggle performs a check immediately;
+the agent then checks every six hours while the policy remains enabled. Policy
+changes and manual checks require the same authenticated HTTPS administration
+controls as pairing and shutdown.
+
+Updates are deliberately narrow:
+
+- Wolnut sends no URL, path, command, arguments, script, or environment value.
+- The agent uses only the HTTPS release directory stored locally during
+  installation.
+- It downloads `agent-release.json` and its checksum, accepts only stable
+  `x.y.z` versions with the matching protocol, and refuses downgrades.
+- It downloads only `wolnut-agent-linux-amd64` or
+  `wolnut-agent-linux-arm64`, verifies the matching SHA-256 file, runs the
+  downloaded binary only with the fixed `version` argument, and confirms the
+  embedded version before an atomic replacement.
+- The agent restarts only `wolnut-agent.service` with a static `systemctl`
+  invocation. Update state survives that restart and is reported afterward.
+
+Agents released before self-update support must be upgraded once with
+**Reinstall agent** in the paired device card. Pairing state is retained when
+the installer is rerun. Tagged releases must use `vX.Y.Z`; the release workflow
+publishes the manifest and checksums automatically.
+
 ## Operation and recovery
 
 - Wolnut acts only on explicit, valid NUT `OB` status and battery charge data.
@@ -152,6 +187,7 @@ Like the installer, the uninstaller runs directly as root and falls back to
   action. "Accepted" does not claim the machine finished powering off.
 - Certificate expiry is shown after pairing or a successful connection test.
   Re-pair the agent to rotate its five-year leaf certificate.
+- Unpairing or resetting pairing disables the agent's automatic update policy.
 
 Normal **Unpair** resets both sides. If the device is unreachable, the WebUI
 can forget it locally; afterward run these commands as root (directly or with

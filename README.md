@@ -49,9 +49,17 @@ fingerprint. The same dialog provides a verified `uninstall.sh` command.
 Pairing does not enable automatic shutdown; choose a threshold and save the
 configuration afterward.
 
-The agent accepts only status, shutdown, and unpair requests. A shutdown
-acknowledgement means the agent accepted and scheduled `systemctl poweroff`;
-Wolnut cannot prove final power-off after the device goes offline.
+Each paired device card shows the installed agent version and the latest
+version discovered from verified release metadata. **Check for update** starts
+a checksum-verified update immediately. **Automatic agent updates** is opt-in
+per device and checks when enabled and every six hours while the agent runs.
+The controller can request only this fixed update operation; it cannot provide
+a download URL, executable path, command, or arguments.
+
+The agent accepts only status, shutdown, fixed self-update, update-policy, and
+unpair requests. A shutdown acknowledgement means the agent accepted and
+scheduled `systemctl poweroff`; Wolnut cannot prove final power-off after the
+device goes offline.
 
 See [Secure shutdown agent setup](docs/agent.md) for installation, HTTPS,
 firewall, pairing, reset, and recovery instructions.

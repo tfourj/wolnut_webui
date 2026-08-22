@@ -72,6 +72,10 @@ fingerprint. Wolnut displays the live enrollment status and refreshes the
 client after pairing. Follow
 [Secure shutdown agent setup](agent.md) for firewall and recovery guidance.
 
+After pairing, use **Test connection** to refresh the installed agent version.
+The client card can check for a newer verified release immediately or enable
+automatic checks for that individual device.
+
 Optional notifications can be configured under **Notifications**. Enable a
 Discord webhook, Gotify, or ntfy provider, enter its settings, and use the
 matching test button before saving. For ntfy, enter the server root URL and
