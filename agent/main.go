@@ -30,11 +30,12 @@ import (
 )
 
 const (
-	version         = "1.0.0"
 	protocolVersion = 1
 	defaultStateDir = "/var/lib/wolnut-agent"
 	defaultListen   = "0.0.0.0:8184"
 )
+
+var version = "dev"
 
 type persistedState struct {
 	AgentID             string               `json:"agent_id"`
