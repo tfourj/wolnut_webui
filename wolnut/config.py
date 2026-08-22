@@ -44,8 +44,12 @@ class ClientConfig:
     name: str
     host: str
     mac: str = ""  # "auto" supported when Wake-on-LAN is enabled
-    always_wake: bool = False  # if True, wake even if offline before power loss (default: only if was online)
-    enabled: bool = True  # if False, client is ignored (no ping, no WOL) - useful to temporarily disable
+    always_wake: bool = (
+        False  # if True, wake even if offline before power loss (default: only if was online)
+    )
+    enabled: bool = (
+        True  # if False, client is ignored (no ping, no WOL) - useful to temporarily disable
+    )
     wake_enabled: bool = True
     shutdown: ShutdownConfig = field(default_factory=ShutdownConfig)
 
@@ -91,7 +95,9 @@ class NotificationEventsConfig:
 
 @dataclass
 class NotificationsConfig:
-    discord: DiscordNotificationConfig = field(default_factory=DiscordNotificationConfig)
+    discord: DiscordNotificationConfig = field(
+        default_factory=DiscordNotificationConfig
+    )
     gotify: GotifyNotificationConfig = field(default_factory=GotifyNotificationConfig)
     ntfy: NtfyNotificationConfig = field(default_factory=NtfyNotificationConfig)
     events: NotificationEventsConfig = field(default_factory=NotificationEventsConfig)
@@ -193,7 +199,9 @@ def load_config(
     if "suppress_mac_warnings" in raw and "suppress_mac_warnings" not in webui_raw:
         webui_raw["suppress_mac_warnings"] = raw["suppress_mac_warnings"]
     # filter to known fields to avoid TypeError on extra keys
-    webui_filtered = {k: v for k, v in webui_raw.items() if k in WebUIConfig.__dataclass_fields__}
+    webui_filtered = {
+        k: v for k, v in webui_raw.items() if k in WebUIConfig.__dataclass_fields__
+    }
     webui = WebUIConfig(**webui_filtered)
 
     notifications = notifications_config_from_dict(raw.get("notifications"))
@@ -304,9 +312,13 @@ def validate_config(raw: dict):
                 f"Client '{client['name']}' has invalid MAC address format: {mac}"
             )
         if "always_wake" in client and not isinstance(client["always_wake"], bool):
-            raise ValueError(f"Client '{client['name']}' has invalid 'always_wake' (must be boolean)")
+            raise ValueError(
+                f"Client '{client['name']}' has invalid 'always_wake' (must be boolean)"
+            )
         if "enabled" in client and not isinstance(client["enabled"], bool):
-            raise ValueError(f"Client '{client['name']}' has invalid 'enabled' (must be boolean)")
+            raise ValueError(
+                f"Client '{client['name']}' has invalid 'enabled' (must be boolean)"
+            )
 
         shutdown = client.get("shutdown", {}) or {}
         if not isinstance(shutdown, dict):

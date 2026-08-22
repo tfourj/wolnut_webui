@@ -22,9 +22,15 @@ class AgentError(RuntimeError):
 
 
 def normalize_fingerprint(value: str) -> str:
-    normalized = "".join(character for character in value if character.isalnum()).lower()
-    if len(normalized) != 64 or any(character not in "0123456789abcdef" for character in normalized):
-        raise AgentError("Certificate fingerprint must contain 64 hexadecimal characters")
+    normalized = "".join(
+        character for character in value if character.isalnum()
+    ).lower()
+    if len(normalized) != 64 or any(
+        character not in "0123456789abcdef" for character in normalized
+    ):
+        raise AgentError(
+            "Certificate fingerprint must contain 64 hexadecimal characters"
+        )
     return normalized
 
 
@@ -72,13 +78,17 @@ class SecurityStore:
             os.chmod(self.directory, 0o700)
             return ControllerIdentity(ca_cert_path, client_cert_path, client_key_path)
         if any(path.exists() for path in paths):
-            raise AgentError("Controller security identity is incomplete; restore it or remove all identity files")
+            raise AgentError(
+                "Controller security identity is incomplete; restore it or remove all identity files"
+            )
 
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(self.directory, 0o700)
         now = datetime.now(timezone.utc)
         ca_key = ec.generate_private_key(ec.SECP256R1())
-        ca_subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Wolnut local controller CA")])
+        ca_subject = x509.Name(
+            [x509.NameAttribute(NameOID.COMMON_NAME, "Wolnut local controller CA")]
+        )
         ca_cert = (
             x509.CertificateBuilder()
             .subject_name(ca_subject)
@@ -112,7 +122,9 @@ class SecurityStore:
                 serialization.PublicFormat.SubjectPublicKeyInfo,
             )
         ).hexdigest()[:32]
-        client_subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "wolnut-controller")])
+        client_subject = x509.Name(
+            [x509.NameAttribute(NameOID.COMMON_NAME, "wolnut-controller")]
+        )
         client_cert = (
             x509.CertificateBuilder()
             .subject_name(client_subject)
@@ -123,11 +135,17 @@ class SecurityStore:
             .not_valid_after(now + timedelta(days=1825))
             .add_extension(
                 x509.SubjectAlternativeName(
-                    [x509.UniformResourceIdentifier(f"urn:wolnut:controller:{controller_id}")]
+                    [
+                        x509.UniformResourceIdentifier(
+                            f"urn:wolnut:controller:{controller_id}"
+                        )
+                    ]
                 ),
                 critical=False,
             )
-            .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]), critical=True)
+            .add_extension(
+                x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]), critical=True
+            )
             .sign(ca_key, hashes.SHA256())
         )
 
@@ -135,12 +153,18 @@ class SecurityStore:
         encryption = serialization.NoEncryption()
         self._write_private(
             ca_key_path,
-            ca_key.private_bytes(serialization.Encoding.PEM, private_format, encryption),
+            ca_key.private_bytes(
+                serialization.Encoding.PEM, private_format, encryption
+            ),
         )
-        self._write_private(ca_cert_path, ca_cert.public_bytes(serialization.Encoding.PEM))
+        self._write_private(
+            ca_cert_path, ca_cert.public_bytes(serialization.Encoding.PEM)
+        )
         self._write_private(
             client_key_path,
-            client_key.private_bytes(serialization.Encoding.PEM, private_format, encryption),
+            client_key.private_bytes(
+                serialization.Encoding.PEM, private_format, encryption
+            ),
         )
         self._write_private(
             client_cert_path, client_cert.public_bytes(serialization.Encoding.PEM)
@@ -161,7 +185,9 @@ class SecurityStore:
             raise AgentError("Agent certificate request signature is invalid")
         expected_identity = f"urn:wolnut:agent:{agent_id}"
         try:
-            names = csr.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+            names = csr.extensions.get_extension_for_class(
+                x509.SubjectAlternativeName
+            ).value
             uris = names.get_values_for_type(x509.UniformResourceIdentifier)
         except x509.ExtensionNotFound as error:
             raise AgentError("Agent certificate request has no identity") from error
@@ -183,7 +209,9 @@ class SecurityStore:
                 ),
                 critical=False,
             )
-            .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=True)
+            .add_extension(
+                x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=True
+            )
             .sign(ca_key, hashes.SHA256())
         )
         return certificate.public_bytes(serialization.Encoding.PEM).decode()
@@ -210,12 +238,16 @@ class AgentClient:
             raise AgentError("Agent returned an invalid response") from error
         if response.status >= 400:
             message = value.get("error") if isinstance(value, dict) else None
-            raise AgentError(str(message or f"Agent request failed with status {response.status}"))
+            raise AgentError(
+                str(message or f"Agent request failed with status {response.status}")
+            )
         if not isinstance(value, dict):
             raise AgentError("Agent returned an invalid response")
         return value
 
-    def _pinned_post(self, path: str, payload: dict[str, Any], fingerprint: str) -> dict[str, Any]:
+    def _pinned_post(
+        self, path: str, payload: dict[str, Any], fingerprint: str
+    ) -> dict[str, Any]:
         expected = normalize_fingerprint(fingerprint)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         context.minimum_version = ssl.TLSVersion.TLSv1_3
@@ -235,7 +267,10 @@ class AgentClient:
                 "POST",
                 path,
                 body=body,
-                headers={"Content-Type": "application/json", "Content-Length": str(len(body))},
+                headers={
+                    "Content-Type": "application/json",
+                    "Content-Length": str(len(body)),
+                },
             )
             return self._decode_response(connection.getresponse())
         except (OSError, ssl.SSLError, http.client.HTTPException) as error:
@@ -298,7 +333,9 @@ class AgentClient:
             except x509.ExtensionNotFound as error:
                 raise AgentError("Agent certificate has no identity") from error
             if f"urn:wolnut:agent:{agent_id}" not in uris:
-                raise AgentError("Agent certificate identity does not match configured device")
+                raise AgentError(
+                    "Agent certificate identity does not match configured device"
+                )
             body = json.dumps(payload).encode() if payload is not None else None
             headers = {"Content-Type": "application/json"} if body is not None else {}
             connection.request(method, path, body=body, headers=headers)

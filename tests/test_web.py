@@ -133,7 +133,9 @@ def _secure_app_client(tmp_path, monkeypatch, config_data):
     monkeypatch.setenv("ADMIN_PASSWORD", "correct horse battery staple")
     monkeypatch.setenv("WOLNUT_JWT_SECRET", "a" * 32)
     client = TestClient(
-        create_app(config_file=str(config_path), status_file=str(tmp_path / "state.json")),
+        create_app(
+            config_file=str(config_path), status_file=str(tmp_path / "state.json")
+        ),
         base_url="https://wolnut.test",
     )
     login = client.post(

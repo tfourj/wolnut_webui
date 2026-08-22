@@ -95,7 +95,9 @@ class ShutdownCoordinator:
                         f"Wolnut could not reach {client.name}: {message}",
                     )
                     state_tracker.mark_shutdown_failure_notified(client.name)
-                logger.warning("Shutdown delivery failed for %s: %s", client.name, message)
+                logger.warning(
+                    "Shutdown delivery failed for %s: %s", client.name, message
+                )
                 continue
 
             state_tracker.record_shutdown_attempt(

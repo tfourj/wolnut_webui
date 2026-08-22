@@ -40,6 +40,7 @@ from wolnut.wol import send_wol_packet
 # Config path helpers
 # ---------------------------------------------------------------------------
 
+
 def resolve_config_path(explicit: str | None = None) -> str:
     if explicit:
         return explicit
@@ -80,6 +81,7 @@ def save_raw_config(path: str, data: dict) -> None:
 # ---------------------------------------------------------------------------
 # Pydantic models (for validation / OpenAPI)
 # ---------------------------------------------------------------------------
+
 
 class NutModel(BaseModel):
     ups: str = Field(..., description="Format: <ups-name>@<host>")
@@ -197,12 +199,17 @@ class AgentUnpairRequest(BaseModel):
 # Auth helpers (JWT bearer)
 # ---------------------------------------------------------------------------
 
+
 def _get_auth_config():
     username = os.getenv("ADMIN_USERNAME", "").strip()
     password = os.getenv("ADMIN_PASSWORD", "").strip()
     enabled = bool(username and password)
     # JWT secret: explicit env or fallback to password hash; if no password, use random ephemeral
-    secret = os.getenv("WOLNUT_JWT_SECRET") or os.getenv("JWT_SECRET") or (password if password else "dev-secret-change-me")
+    secret = (
+        os.getenv("WOLNUT_JWT_SECRET")
+        or os.getenv("JWT_SECRET")
+        or (password if password else "dev-secret-change-me")
+    )
     return enabled, username, password, secret
 
 
@@ -260,9 +267,12 @@ def _verify_token(token: str, secret: str) -> str:
 # FastAPI app factory
 # ---------------------------------------------------------------------------
 
+
 def create_app(config_file: str | None = None, status_file: str | None = None) -> Any:
     if FastAPI is None:
-        raise RuntimeError("FastAPI not installed. Install with: pip install fastapi uvicorn")
+        raise RuntimeError(
+            "FastAPI not installed. Install with: pip install fastapi uvicorn"
+        )
 
     app = FastAPI(title="Wolnut WebUI", version="1.0.0")
 
@@ -292,7 +302,9 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
     shutdown_admin_configured = auth_enabled and len(explicit_jwt_secret) >= 32
     security = HTTPBearer(auto_error=False)
 
-    def require_auth(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+    def require_auth(
+        credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    ):
         if not auth_enabled:
             return admin_user or "anonymous"
         if credentials is None or not credentials.credentials:
@@ -383,7 +395,10 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             raw["wake_on"].setdefault(k, v)
         raw.setdefault("webui", {})
         # legacy: migrate top-level suppress_mac_warnings into webui
-        if "suppress_mac_warnings" in raw and "suppress_mac_warnings" not in raw["webui"]:
+        if (
+            "suppress_mac_warnings" in raw
+            and "suppress_mac_warnings" not in raw["webui"]
+        ):
             raw["webui"]["suppress_mac_warnings"] = raw.pop("suppress_mac_warnings")
         raw["webui"].setdefault("suppress_mac_warnings", False)
         raw.setdefault("notifications", {})
@@ -440,9 +455,13 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             if client.get("name") == client_name
         ]
         if not matches:
-            raise HTTPException(status_code=404, detail=f"Client {client_name} not found")
+            raise HTTPException(
+                status_code=404, detail=f"Client {client_name} not found"
+            )
         if len(matches) > 1:
-            raise HTTPException(status_code=409, detail=f"Client name {client_name} is ambiguous")
+            raise HTTPException(
+                status_code=409, detail=f"Client name {client_name} is ambiguous"
+            )
         return matches[0]
 
     def _agent_client(client: dict) -> AgentClient:
@@ -493,6 +512,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             temporary = path.with_suffix(path.suffix + ".tmp")
             temporary.write_text(json.dumps(data, indent=2, sort_keys=True))
             temporary.replace(path)
+
     def _notifications_from_raw(raw: dict) -> NotificationService:
         config = notifications_config_from_dict(raw.get("notifications"))
         return NotificationService(config)
@@ -519,7 +539,11 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         if not auth_enabled:
             # no auth configured -> issue token anyway for consistency
             token = _create_access_token(req.username or "anonymous", jwt_secret)
-            return {"access_token": token, "token_type": "bearer", "auth_enabled": False}
+            return {
+                "access_token": token,
+                "token_type": "bearer",
+                "auth_enabled": False,
+            }
         if req.username != admin_user or req.password != admin_pass:
             raise HTTPException(status_code=401, detail="Invalid username or password")
         token = _create_access_token(req.username, jwt_secret)
@@ -572,7 +596,9 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             raise HTTPException(status_code=400, detail=str(e))
         # Try to resolve MAC for clients with "auto" and collect warnings (unless suppressed via WebUI Settings)
         warnings: list[dict] = []
-        suppress_warnings = raw.get("webui", {}).get("suppress_mac_warnings", False) or raw.get("suppress_mac_warnings", False)
+        suppress_warnings = raw.get("webui", {}).get(
+            "suppress_mac_warnings", False
+        ) or raw.get("suppress_mac_warnings", False)
         if not suppress_warnings:
             for c in raw.get("clients", []):
                 if c.get("enabled", True) is False:
@@ -583,22 +609,43 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                     try:
                         resolved = resolve_mac_from_host(host)
                         if resolved:
-                            logger.info("Resolved MAC for %s (%s) -> %s", name, host, resolved)
+                            logger.info(
+                                "Resolved MAC for %s (%s) -> %s", name, host, resolved
+                            )
                         else:
                             msg = f"Could not resolve MAC for {name} ({host})"
                             logger.warning(msg)
-                            warnings.append({"client": name, "host": host, "message": msg, "field": "mac"})
+                            warnings.append(
+                                {
+                                    "client": name,
+                                    "host": host,
+                                    "message": msg,
+                                    "field": "mac",
+                                }
+                            )
                     except Exception as e:
                         msg = f"Could not resolve MAC for {name} ({host}): {e}"
                         logger.warning(msg)
-                        warnings.append({"client": name, "host": host, "message": msg, "field": "mac"})
+                        warnings.append(
+                            {
+                                "client": name,
+                                "host": host,
+                                "message": msg,
+                                "field": "mac",
+                            }
+                        )
         # save
         try:
             config_store.write(raw)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to write config: {e}")
         logger.info("Config saved via WebUI to %s", cfg_path)
-        return {"status": "saved", "path": cfg_path, "config": raw, "warnings": warnings}
+        return {
+            "status": "saved",
+            "path": cfg_path,
+            "config": raw,
+            "warnings": warnings,
+        }
 
     @app.get("/api/status")
     def get_status(user: str = Depends(require_auth)):
@@ -609,7 +656,13 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         ups_password = raw_cfg.get("nut", {}).get("password")
         ups_port = raw_cfg.get("nut", {}).get("port", 3493)
         ups_timeout = raw_cfg.get("nut", {}).get("timeout", 5)
-        ups, ups_error = get_ups_status_detailed(ups_name, username=ups_username, password=ups_password, port=ups_port, timeout=ups_timeout)
+        ups, ups_error = get_ups_status_detailed(
+            ups_name,
+            username=ups_username,
+            password=ups_password,
+            port=ups_port,
+            timeout=ups_timeout,
+        )
         import shutil as _shutil
 
         upsc_available = _shutil.which("upsc") is not None
@@ -729,7 +782,9 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
     ):
         _require_secure_admin(request)
         if req.confirmation != client_name:
-            raise HTTPException(status_code=400, detail="Device name confirmation does not match")
+            raise HTTPException(
+                status_code=400, detail="Device name confirmation does not match"
+            )
         raw = _read_config_or_default()
         client = _find_client(raw, client_name)
         if client.get("enabled", True) is False:
@@ -782,7 +837,9 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
     ):
         _require_secure_admin(request)
         if req.confirmation != client_name:
-            raise HTTPException(status_code=400, detail="Device name confirmation does not match")
+            raise HTTPException(
+                status_code=400, detail="Device name confirmation does not match"
+            )
         raw = _read_config_or_default()
         client = _find_client(raw, client_name)
         agent_id = (client.get("shutdown", {}) or {}).get("agent_id")
@@ -823,7 +880,13 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         ups_password = raw_cfg.get("nut", {}).get("password")
         ups_port = raw_cfg.get("nut", {}).get("port", 3493)
         ups_timeout = raw_cfg.get("nut", {}).get("timeout", 5)
-        ups, ups_error = get_ups_status_detailed(ups_name, username=ups_username, password=ups_password, port=ups_port, timeout=ups_timeout)
+        ups, ups_error = get_ups_status_detailed(
+            ups_name,
+            username=ups_username,
+            password=ups_password,
+            port=ups_port,
+            timeout=ups_timeout,
+        )
         import shutil as _shutil
 
         return {
@@ -882,7 +945,9 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                         "Wake-on-LAN failed",
                         f"Could not send a wake packet to {client_name} ({lookup_mac}).",
                     )
-                    raise HTTPException(status_code=500, detail="Failed to send WOL packet")
+                    raise HTTPException(
+                        status_code=500, detail="Failed to send WOL packet"
+                    )
                 notifications.send(
                     "wake_sent",
                     "Wake-on-LAN packet sent",
@@ -912,7 +977,9 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             raise HTTPException(status_code=400, detail="host required")
         mac = resolve_mac_from_host(host)
         if not mac:
-            raise HTTPException(status_code=404, detail=f"Could not resolve MAC for {host}")
+            raise HTTPException(
+                status_code=404, detail=f"Could not resolve MAC for {host}"
+            )
         return {"host": host, "mac": mac}
 
     @app.post("/api/ping")
@@ -947,7 +1014,11 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         @app.get("/{full_path:path}")
         def serve_spa(full_path: str):
             # Don't intercept API/docs/openapi paths — let FastAPI 404
-            if full_path.startswith("api/") or full_path.startswith("docs") or full_path.startswith("openapi"):
+            if (
+                full_path.startswith("api/")
+                or full_path.startswith("docs")
+                or full_path.startswith("openapi")
+            ):
                 from fastapi.responses import JSONResponse
 
                 return JSONResponse(status_code=404, content={"detail": "Not Found"})
@@ -956,8 +1027,12 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             if full_path and maybe.exists() and maybe.is_file():
                 return FileResponse(str(maybe))
             return FileResponse(str(dist_dir / "index.html"))
+
     else:
-        logger.warning("WebUI dist not found, serving API only. Candidates checked: %s", dist_candidates)
+        logger.warning(
+            "WebUI dist not found, serving API only. Candidates checked: %s",
+            dist_candidates,
+        )
 
         @app.get("/")
         def root_no_dist():
@@ -975,7 +1050,13 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
 # Threaded server launcher (used by CLI)
 # ---------------------------------------------------------------------------
 
-def start_web_server(host: str = "0.0.0.0", port: int = 8183, config_file: str | None = None, status_file: str | None = None):
+
+def start_web_server(
+    host: str = "0.0.0.0",
+    port: int = 8183,
+    config_file: str | None = None,
+    status_file: str | None = None,
+):
     """Start uvicorn in a daemon thread. Returns thread."""
     try:
         import uvicorn
@@ -992,9 +1073,7 @@ def start_web_server(host: str = "0.0.0.0", port: int = 8183, config_file: str |
             port=port,
             log_level="info",
             proxy_headers=True,
-            forwarded_allow_ips=os.getenv(
-                "WOLNUT_FORWARDED_ALLOW_IPS", "127.0.0.1"
-            ),
+            forwarded_allow_ips=os.getenv("WOLNUT_FORWARDED_ALLOW_IPS", "127.0.0.1"),
         )
 
     t = threading.Thread(target=_run, daemon=True, name="wolnut-web")

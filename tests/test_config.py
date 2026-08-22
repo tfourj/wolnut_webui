@@ -222,7 +222,9 @@ def test_load_config_status_path_override(mocker, minimal_config_dict):
 
 
 def test_shutdown_defaults_preserve_existing_clients(mocker, minimal_config_dict):
-    mocker.patch("builtins.open", mocker.mock_open(read_data=yaml.safe_dump(minimal_config_dict)))
+    mocker.patch(
+        "builtins.open", mocker.mock_open(read_data=yaml.safe_dump(minimal_config_dict))
+    )
 
     cfg = config.load_config("dummy.yaml", False)
 

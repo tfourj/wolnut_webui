@@ -61,14 +61,24 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
         on_battery = True
     shutdown_coordinator = ShutdownCoordinator()
 
-    ups_status = get_ups_status(config.nut.ups, username=config.nut.username, password=config.nut.password, port=config.nut.port, timeout=config.nut.timeout)
+    ups_status = get_ups_status(
+        config.nut.ups,
+        username=config.nut.username,
+        password=config.nut.password,
+        port=config.nut.port,
+        timeout=config.nut.timeout,
+    )
     snapshot = parse_ups_snapshot(ups_status)
     if snapshot:
         battery_percent = snapshot.battery_percent
         power_status = snapshot.mode
-        logger.info("UPS power status: %s, Battery: %s%%", power_status, battery_percent)
+        logger.info(
+            "UPS power status: %s, Battery: %s%%", power_status, battery_percent
+        )
     else:
-        logger.warning("UPS status is incomplete; shutdown and restoration actions are paused")
+        logger.warning(
+            "UPS status is incomplete; shutdown and restoration actions are paused"
+        )
 
     while True:
         # Hot-reload config if file changed (WebUI save)
@@ -76,7 +86,9 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
             cur_mtime = _get_mtime(config_file)
             if cur_mtime != last_mtime and cur_mtime != 0:
                 logger.info("Config file changed, reloading...")
-                new_config = load_config(config_file, status_path=status_file, verbose=verbose)
+                new_config = load_config(
+                    config_file, status_path=status_file, verbose=verbose
+                )
                 if new_config:
                     # Apply new config dynamically
                     if new_config.log_level != config.log_level:
@@ -93,17 +105,29 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
                     # Sync state tracker with new client list
                     state_tracker.sync_clients(config.clients)
                     # Reset recorded sets for removed/added clients (only enabled)
-                    enabled_names = {c.name for c in config.clients if getattr(c, "enabled", True)}
+                    enabled_names = {
+                        c.name for c in config.clients if getattr(c, "enabled", True)
+                    }
                     recorded_down_clients.intersection_update(enabled_names)
                     recorded_up_clients.intersection_update(enabled_names)
-                    logger.info("Config reloaded: %s clients, poll_interval=%s", len(config.clients), config.poll_interval)
+                    logger.info(
+                        "Config reloaded: %s clients, poll_interval=%s",
+                        len(config.clients),
+                        config.poll_interval,
+                    )
                 else:
                     logger.warning("Failed to reload config, keeping previous config")
                 last_mtime = cur_mtime
         except Exception as e:
             logger.warning("Error checking/reloading config: %s", e)
 
-        ups_status = get_ups_status(config.nut.ups, username=config.nut.username, password=config.nut.password, port=config.nut.port, timeout=config.nut.timeout)
+        ups_status = get_ups_status(
+            config.nut.ups,
+            username=config.nut.username,
+            password=config.nut.password,
+            port=config.nut.port,
+            timeout=config.nut.timeout,
+        )
         snapshot = parse_ups_snapshot(ups_status)
         if snapshot is None:
             logger.warning(
@@ -200,7 +224,9 @@ def main(config_file: str, status_file: str, verbose: bool = False) -> int:
                     if state_tracker.should_skip(client.name):
                         continue
 
-                    if not getattr(client, "always_wake", False) and not state_tracker.was_online_before_shutdown(client.name):
+                    if not getattr(
+                        client, "always_wake", False
+                    ) and not state_tracker.was_online_before_shutdown(client.name):
                         logger.info(
                             "Skipping WOL for %s: was not online before power loss",
                             client.name,
@@ -370,7 +396,10 @@ def wolnut(
             from wolnut.web import start_web_server
 
             start_web_server(
-                host=web_host, port=web_port, config_file=config_file, status_file=status_file
+                host=web_host,
+                port=web_port,
+                config_file=config_file,
+                status_file=status_file,
             )
         except Exception as e:
             logger.warning("Failed to start WebUI: %s", e)
@@ -380,12 +409,21 @@ def wolnut(
     # The user can then edit it via the WebUI.
     if config_file is not None and not os.path.exists(config_file):
         if web_enabled:
-            logger.warning("Config file not found at '%s', creating default config...", config_file)
+            logger.warning(
+                "Config file not found at '%s', creating default config...", config_file
+            )
             try:
                 _create_default_config(config_file, status_file)
-                logger.info("Default config created at '%s'. Edit it via WebUI at http://%s:%s", config_file, web_host, web_port)
+                logger.info(
+                    "Default config created at '%s'. Edit it via WebUI at http://%s:%s",
+                    config_file,
+                    web_host,
+                    web_port,
+                )
             except Exception as e:
-                logger.error("Failed to create default config at '%s': %s", config_file, e)
+                logger.error(
+                    "Failed to create default config at '%s': %s", config_file, e
+                )
         # if web is not enabled, let main() report the error normally
 
     if config_file is None:
@@ -398,7 +436,12 @@ def wolnut(
             if web_enabled:
                 # Use the primary default path
                 default_path = DEFAULT_CONFIG_FILEPATHS[0]
-                logger.warning("No config file found. Creating default at '%s' and running WebUI at http://%s:%s", default_path, web_host, web_port)
+                logger.warning(
+                    "No config file found. Creating default at '%s' and running WebUI at http://%s:%s",
+                    default_path,
+                    web_host,
+                    web_port,
+                )
                 try:
                     _create_default_config(default_path, status_file)
                     config_file = default_path
@@ -423,7 +466,12 @@ def wolnut(
         # main() will log the specific error, so we just abort.
         # If web is enabled, don't crash-loop — keep WebUI alive for repair
         if web_enabled:
-            logger.warning("Wolnut monitor failed to start (exit %s). WebUI remains available at http://%s:%s for configuration.", exit_code, web_host, web_port)
+            logger.warning(
+                "Wolnut monitor failed to start (exit %s). WebUI remains available at http://%s:%s for configuration.",
+                exit_code,
+                web_host,
+                web_port,
+            )
             try:
                 import time as _time
 
@@ -444,7 +492,9 @@ def _create_default_config(config_path: str, status_file: str | None = None) -> 
     p.parent.mkdir(parents=True, exist_ok=True)
     if p.exists():
         return
-    status_path = status_file or os.getenv("WOLNUT_STATUS_FILE") or DEFAULT_STATE_FILEPATH
+    status_path = (
+        status_file or os.getenv("WOLNUT_STATUS_FILE") or DEFAULT_STATE_FILEPATH
+    )
     default_cfg = {
         "log_level": "INFO",
         "nut": {"ups": "ups@localhost"},
@@ -495,8 +545,12 @@ def _create_default_config(config_path: str, status_file: str | None = None) -> 
     envvar="WOLNUT_STATUS_FILE",
     help="The status filepath to load.",
 )
-@click.option("--host", envvar="WOLNUT_WEB_HOST", default="0.0.0.0", help="Host to bind")
-@click.option("--port", envvar="WOLNUT_WEB_PORT", default=8183, type=int, help="Port to bind")
+@click.option(
+    "--host", envvar="WOLNUT_WEB_HOST", default="0.0.0.0", help="Host to bind"
+)
+@click.option(
+    "--port", envvar="WOLNUT_WEB_PORT", default=8183, type=int, help="Port to bind"
+)
 def web_only(config_file: str | None, status_file: str | None, host: str, port: int):
     """Run only the WebUI (no monitoring loop). Useful for config editing."""
     logging.basicConfig(
