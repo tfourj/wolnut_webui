@@ -97,6 +97,79 @@ func TestInstallScriptExplainsMissingSudoForNonRoot(t *testing.T) {
 	}
 }
 
+func TestInstallScriptSupportsOldAndNewAgentFlags(t *testing.T) {
+	for _, test := range []struct {
+		name               string
+		help               string
+		expectDownloadBase bool
+	}{
+		{name: "old agent", help: "Usage: install-service --listen", expectDownloadBase: false},
+		{name: "new agent", help: "Usage: install-service --listen --download-base", expectDownloadBase: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			writeExecutable := func(name, body string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(directory, name), []byte(body), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeExecutable("id", "#!/bin/sh\necho 0\n")
+			writeExecutable("uname", "#!/bin/sh\necho x86_64\n")
+			writeExecutable("sha256sum", "#!/bin/sh\nexit 0\n")
+			writeExecutable("curl", `#!/bin/sh
+output=""
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = "-o" ]; then
+        shift
+        output="$1"
+    fi
+    shift
+done
+case "$output" in
+    *.sha256) printf 'unused checksum\n' > "$output" ;;
+    *) cp "$FAKE_AGENT_BINARY" "$output" ;;
+esac
+`)
+			fakeAgent := filepath.Join(directory, "fake-agent")
+			writeExecutable("fake-agent", `#!/bin/sh
+if [ "$1" = "install-service" ] && [ "${2:-}" = "--help" ]; then
+    printf '%s\n' "$FAKE_AGENT_HELP"
+    exit 0
+fi
+printf '%s\n' "$@" > "$FAKE_AGENT_ARGS_FILE"
+`)
+			argumentsFile := filepath.Join(directory, "arguments")
+			command := exec.Command(
+				"/bin/sh", "install.sh",
+				"--download-base", "https://downloads.example",
+				"--enroll-url", "https://wolnut.example/api/agents/enroll",
+				"--enrollment-token", "one-time-token",
+			)
+			command.Env = append(os.Environ(),
+				"PATH="+directory+":/usr/bin:/bin",
+				"FAKE_AGENT_BINARY="+fakeAgent,
+				"FAKE_AGENT_ARGS_FILE="+argumentsFile,
+				"FAKE_AGENT_HELP="+test.help,
+			)
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("installer failed: %v: %s", err, output)
+			}
+			arguments, err := os.ReadFile(argumentsFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			hasDownloadBase := strings.Contains(string(arguments), "--download-base")
+			if hasDownloadBase != test.expectDownloadBase {
+				t.Fatalf("unexpected install arguments: %s", arguments)
+			}
+			if !strings.Contains(string(arguments), "--enrollment-token\none-time-token") {
+				t.Fatalf("enrollment arguments missing: %s", arguments)
+			}
+		})
+	}
+}
+
 func TestStoreUsesPrivatePermissions(t *testing.T) {
 	dir := t.TempDir()
 	s := &store{dir: filepath.Join(dir, "agent")}

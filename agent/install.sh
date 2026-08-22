@@ -110,27 +110,27 @@ curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
 (cd "$temporary_directory" && sha256sum -c "$binary_name.sha256")
 chmod 0755 "$binary_path"
 
+install_help="$("$binary_path" install-service --help 2>&1 || true)"
+case "$install_help" in
+    *download-base*) supports_download_base=true ;;
+    *) supports_download_base=false ;;
+esac
+
 run_install() {
     privilege_command="$1"
+
+    set -- "$binary_path" install-service --listen "$listen_address"
+    if [ "$supports_download_base" = true ]; then
+        set -- "$@" --download-base "$download_base"
+    fi
     if [ -n "$enrollment_url" ]; then
-        if [ -n "$privilege_command" ]; then
-            "$privilege_command" "$binary_path" install-service \
-                --listen "$listen_address" \
-                --download-base "$download_base" \
-                --enroll-url "$enrollment_url" \
-                --enrollment-token "$enrollment_token"
-        else
-            "$binary_path" install-service \
-                --listen "$listen_address" \
-                --download-base "$download_base" \
-                --enroll-url "$enrollment_url" \
-                --enrollment-token "$enrollment_token"
-        fi
-    elif [ -n "$privilege_command" ]; then
-        "$privilege_command" "$binary_path" install-service \
-            --listen "$listen_address" --download-base "$download_base"
+        set -- "$@" --enroll-url "$enrollment_url" --enrollment-token "$enrollment_token"
+    fi
+
+    if [ -n "$privilege_command" ]; then
+        "$privilege_command" "$@"
     else
-        "$binary_path" install-service --listen "$listen_address" --download-base "$download_base"
+        "$@"
     fi
 }
 
