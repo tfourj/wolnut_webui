@@ -256,6 +256,19 @@ export function createAgentEnrollment(clientName: string, agentPort: number) {
   }) as Promise<AgentEnrollment>
 }
 
+export interface ManualAgentInstallCommands {
+  install_command: string
+  pairing_command: string
+  uninstall_command: string
+}
+
+export function createManualAgentInstall(clientName: string, agentPort: number) {
+  return agentRequest('/api/agents/manual-install', {
+    client_name: clientName,
+    agent_port: agentPort,
+  }) as Promise<ManualAgentInstallCommands>
+}
+
 export async function getAgentEnrollment(enrollmentId: string) {
   const res = await authFetch(`/api/agents/enrollments/${encodeURIComponent(enrollmentId)}`)
   if (!res.ok) {

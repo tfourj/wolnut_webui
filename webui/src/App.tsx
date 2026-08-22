@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   clearToken,
   createAgentEnrollment,
+  createManualAgentInstall,
   fetchConfig,
   fetchStatus,
   getAgentEnrollment,
@@ -20,6 +21,7 @@ import {
   testNotification,
   unpairAgent,
   AgentEnrollmentStatus,
+  ManualAgentInstallCommands,
   NotificationProvider,
   WolnutConfig,
 } from './api'
@@ -1048,6 +1050,8 @@ function ClientsTab({
   const [enrollmentId, setEnrollmentId] = useState('')
   const [enrollmentExpiresAt, setEnrollmentExpiresAt] = useState(0)
   const [enrollmentStatus, setEnrollmentStatus] = useState<AgentEnrollmentStatus | null>(null)
+  const [manualInstallIndex, setManualInstallIndex] = useState<number | null>(null)
+  const [manualCommands, setManualCommands] = useState<ManualAgentInstallCommands | null>(null)
   const updateClient = (idx: number, patch: Partial<WolnutConfig['clients'][number]>) => {
     const next = [...cfg.clients]
     next[idx] = { ...next[idx], ...patch }
@@ -1115,6 +1119,34 @@ function ClientsTab({
     setEnrollmentId('')
     setEnrollmentExpiresAt(0)
     setEnrollmentStatus(null)
+  }
+
+  const openManualInstall = (idx: number) => {
+    setManualInstallIndex(idx)
+    setAgentPort(cfg.clients[idx].shutdown.agent_port || 8184)
+    setManualCommands(null)
+  }
+
+  const generateManualCommands = async () => {
+    if (manualInstallIndex === null) return
+    setAgentBusy(true)
+    try {
+      const client = cfg.clients[manualInstallIndex]
+      setManualCommands(await createManualAgentInstall(client.name, agentPort))
+    } catch (error: any) {
+      showToast(`Could not create manual commands: ${String(error.message || error)}`)
+    } finally {
+      setAgentBusy(false)
+    }
+  }
+
+  const copyCommand = async (command: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(command)
+      showToast(`${label} copied`)
+    } catch {
+      showToast('Could not copy automatically; select the command manually')
+    }
   }
 
   const generateInstallCommand = async () => {
@@ -1471,6 +1503,13 @@ function ClientsTab({
                     <button
                       className="btn btn-ghost btn-small"
                       disabled={isDirty || !shutdownAdminReady || agentBusy}
+                      onClick={() => openManualInstall(idx)}
+                    >
+                      Manual install
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-small"
+                      disabled={isDirty || !shutdownAdminReady || agentBusy}
                       onClick={() => openPairing(idx)}
                     >
                       Pair manually
@@ -1535,8 +1574,9 @@ function ClientsTab({
               Install and pair {cfg.clients[installIndex].name}
             </h2>
             <p className="desc">
-              Generate a one-time command, then run it as a normal user on the Linux device. It verifies the
-              downloaded checksum, asks for sudo, installs the systemd service, and pairs over HTTPS automatically.
+              Generate a one-time command, then run it on the Linux device. It verifies the installer and agent
+              checksums, runs directly as root or uses sudo when available, installs the systemd service, and pairs
+              over HTTPS automatically.
             </p>
             <div className="field">
               <label>Agent port</label>
@@ -1588,14 +1628,7 @@ function ClientsTab({
                 <div className="toolbar">
                   <button
                     className="btn btn-primary"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(installCommand)
-                        showToast('Install command copied')
-                      } catch {
-                        showToast('Could not copy automatically; select the command manually')
-                      }
-                    }}
+                    onClick={() => copyCommand(installCommand, 'Install command')}
                   >
                     Copy command
                   </button>
@@ -1622,6 +1655,128 @@ function ClientsTab({
               <button className="btn btn-ghost" onClick={closeQuickInstall} disabled={agentBusy}>
                 {enrollmentStatus?.status === 'paired' ? 'Done' : 'Close'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {manualInstallIndex !== null && (
+        <div className="modal-backdrop" role="presentation">
+          <div
+            className="modal quick-install-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="manual-install-title"
+          >
+            <h2 id="manual-install-title">
+              Manually install {cfg.clients[manualInstallIndex].name}
+            </h2>
+            <p className="desc">
+              This installs the service without an enrollment secret. You will generate a pairing code on the
+              device and finish certificate-pinned pairing in Wolnut.
+            </p>
+            <div className="field">
+              <label>Agent port</label>
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                value={agentPort}
+                disabled={!!manualCommands}
+                onChange={event => setAgentPort(Number(event.target.value))}
+              />
+            </div>
+
+            {!manualCommands && (
+              <button
+                className="btn btn-primary"
+                disabled={agentBusy || agentPort < 1 || agentPort > 65535}
+                onClick={generateManualCommands}
+              >
+                {agentBusy ? 'Generating...' : 'Show manual commands'}
+              </button>
+            )}
+
+            {manualCommands && (
+              <div className="manual-steps">
+                <div className="field">
+                  <label>1. Install the agent on {cfg.clients[manualInstallIndex].host}</label>
+                  <textarea
+                    className="install-command"
+                    value={manualCommands.install_command}
+                    readOnly
+                    rows={7}
+                    spellCheck={false}
+                  />
+                  <button
+                    className="btn btn-ghost btn-small"
+                    onClick={() => copyCommand(manualCommands.install_command, 'Manual install command')}
+                  >
+                    Copy install command
+                  </button>
+                </div>
+                <div className="field">
+                  <label>2. Generate the pairing code and certificate fingerprint</label>
+                  <textarea
+                    className="install-command compact-command"
+                    value={manualCommands.pairing_command}
+                    readOnly
+                    rows={3}
+                    spellCheck={false}
+                  />
+                  <button
+                    className="btn btn-ghost btn-small"
+                    onClick={() => copyCommand(manualCommands.pairing_command, 'Pairing command')}
+                  >
+                    Copy pairing command
+                  </button>
+                </div>
+                <p className="desc">
+                  3. Copy both values printed by the device, then continue to manual pairing.
+                </p>
+                <details className="uninstall-details">
+                  <summary>Uninstall command</summary>
+                  <textarea
+                    className="install-command compact-command"
+                    value={manualCommands.uninstall_command}
+                    readOnly
+                    rows={4}
+                    spellCheck={false}
+                  />
+                  <button
+                    className="btn btn-ghost btn-small"
+                    onClick={() => copyCommand(manualCommands.uninstall_command, 'Uninstall command')}
+                  >
+                    Copy uninstall command
+                  </button>
+                </details>
+              </div>
+            )}
+
+            <div className="toolbar modal-actions">
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  setManualInstallIndex(null)
+                  setManualCommands(null)
+                }}
+                disabled={agentBusy}
+              >
+                Close
+              </button>
+              {manualCommands && (
+                <button
+                  className="btn btn-primary"
+                  onClick={() => {
+                    const index = manualInstallIndex
+                    setManualInstallIndex(null)
+                    setManualCommands(null)
+                    openPairing(index)
+                  }}
+                >
+                  Continue to pairing
+                </button>
+              )}
             </div>
           </div>
         </div>
