@@ -124,3 +124,125 @@ def test_ntfy_notification_test_uses_submitted_provider_config(tmp_path, mocker)
         "Your notification provider is configured correctly.",
         4,
     )
+
+
+def _secure_app_client(tmp_path, monkeypatch, config_data):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(config_data))
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "correct horse battery staple")
+    monkeypatch.setenv("WOLNUT_JWT_SECRET", "a" * 32)
+    client = TestClient(
+        create_app(config_file=str(config_path), status_file=str(tmp_path / "state.json")),
+        base_url="https://wolnut.test",
+    )
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "admin", "password": "correct horse battery staple"},
+    )
+    token = login.json()["access_token"]
+    client.headers["Authorization"] = f"Bearer {token}"
+    return client, config_path
+
+
+def test_pair_agent_requires_https(tmp_path, monkeypatch):
+    config = {
+        "nut": {"ups": "ups@localhost"},
+        "clients": [
+            {
+                "name": "server",
+                "host": "server.local",
+                "mac": "00:11:22:33:44:55",
+            }
+        ],
+    }
+    secure_client, config_path = _secure_app_client(tmp_path, monkeypatch, config)
+    token = secure_client.headers["Authorization"]
+    http_client = TestClient(
+        create_app(config_file=str(config_path)), base_url="http://wolnut.test"
+    )
+    http_client.headers["Authorization"] = token
+
+    response = http_client.post(
+        "/api/agents/pair",
+        json={
+            "client_name": "server",
+            "agent_port": 8184,
+            "pairing_code": "ABCDEFGHIJKLMNOP",
+            "fingerprint": "AA" * 32,
+        },
+    )
+
+    assert response.status_code == 426
+
+
+def test_pair_agent_persists_server_owned_identity(tmp_path, monkeypatch, mocker):
+    config = {
+        "nut": {"ups": "ups@localhost"},
+        "clients": [
+            {
+                "name": "server",
+                "host": "server.local",
+                "mac": "00:11:22:33:44:55",
+            }
+        ],
+    }
+    client, config_path = _secure_app_client(tmp_path, monkeypatch, config)
+    agent = mocker.patch("wolnut.web.AgentClient").return_value
+    agent.pair.return_value = {
+        "agent_id": "agent-123",
+        "hostname": "server",
+        "version": "1.0.0",
+    }
+
+    response = client.post(
+        "/api/agents/pair",
+        json={
+            "client_name": "server",
+            "agent_port": 9191,
+            "pairing_code": "ABCDEFGHIJKLMNOP",
+            "fingerprint": "AA" * 32,
+        },
+    )
+
+    assert response.status_code == 200
+    saved = yaml.safe_load(config_path.read_text())
+    assert saved["clients"][0]["shutdown"] == {
+        "enabled": False,
+        "battery_percent": 20,
+        "agent_id": "agent-123",
+        "agent_port": 9191,
+    }
+
+
+def test_manual_shutdown_requires_exact_device_name(tmp_path, monkeypatch, mocker):
+    config = {
+        "nut": {"ups": "ups@localhost"},
+        "clients": [
+            {
+                "name": "server",
+                "host": "server.local",
+                "mac": "00:11:22:33:44:55",
+                "shutdown": {
+                    "enabled": True,
+                    "battery_percent": 20,
+                    "agent_id": "agent-123",
+                    "agent_port": 8184,
+                },
+            }
+        ],
+    }
+    client, _ = _secure_app_client(tmp_path, monkeypatch, config)
+    agent = mocker.patch("wolnut.web.AgentClient").return_value
+    agent.shutdown.return_value = {"status": "accepted"}
+
+    rejected = client.post(
+        "/api/agents/server/shutdown", json={"confirmation": "wrong"}
+    )
+    accepted = client.post(
+        "/api/agents/server/shutdown", json={"confirmation": "server"}
+    )
+
+    assert rejected.status_code == 400
+    assert accepted.status_code == 200
+    agent.shutdown.assert_called_once()

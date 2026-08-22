@@ -3,6 +3,8 @@ import logging
 import os
 import subprocess
 import threading
+import time
+import uuid
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -11,7 +13,7 @@ import yaml
 logger = logging.getLogger("wolnut")
 
 try:
-    from fastapi import Depends, FastAPI, HTTPException
+    from fastapi import Depends, FastAPI, HTTPException, Request
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import FileResponse
     from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -26,6 +28,8 @@ from wolnut.config import (
     notifications_config_from_dict,
     validate_config,
 )
+from wolnut.agent_client import AgentClient, AgentError, SecurityStore
+from wolnut.config_store import ConfigStore
 from wolnut.monitor import get_ups_status, get_ups_status_detailed, is_client_online
 from wolnut.notifications import NotificationService
 from wolnut.state import DEFAULT_STATE_FILEPATH
@@ -92,12 +96,21 @@ class WakeOnModel(BaseModel):
     reattempt_delay: int = 30
 
 
+class ShutdownModel(BaseModel):
+    enabled: bool = False
+    battery_percent: int = Field(default=20, ge=1, le=100)
+    agent_id: Optional[str] = None
+    agent_port: int = Field(default=8184, ge=1, le=65535)
+
+
 class ClientModel(BaseModel):
     name: str
     host: str
-    mac: str
+    mac: str = ""
     always_wake: bool = False
     enabled: bool = True
+    wake_enabled: bool = True
+    shutdown: ShutdownModel = Field(default_factory=ShutdownModel)
 
 
 class WebUIConfigModel(BaseModel):
@@ -160,6 +173,22 @@ class WolRequest(BaseModel):
 class NotificationTestRequest(BaseModel):
     provider: Literal["discord", "gotify", "ntfy"]
     notifications: NotificationsConfigModel
+
+
+class AgentPairRequest(BaseModel):
+    client_name: str
+    agent_port: int = Field(default=8184, ge=1, le=65535)
+    pairing_code: str = Field(..., min_length=10, max_length=128)
+    fingerprint: str = Field(..., min_length=64, max_length=128)
+
+
+class AgentShutdownRequest(BaseModel):
+    confirmation: str
+
+
+class AgentUnpairRequest(BaseModel):
+    confirmation: str
+    force_local: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -235,19 +264,30 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
 
     app = FastAPI(title="Wolnut WebUI", version="1.0.0")
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    cors_origins = [
+        value.strip()
+        for value in os.getenv("WOLNUT_CORS_ORIGINS", "").split(",")
+        if value.strip()
+    ]
+    if cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "PUT"],
+            allow_headers=["Authorization", "Content-Type"],
+        )
 
     cfg_path = resolve_config_path(config_file)
     st_path = resolve_status_path(status_file)
+    config_store = ConfigStore(cfg_path)
+    security_store = SecurityStore()
+    state_lock = threading.RLock()
 
     # --- auth setup ---
     auth_enabled, admin_user, admin_pass, jwt_secret = _get_auth_config()
+    explicit_jwt_secret = os.getenv("WOLNUT_JWT_SECRET", "")
+    shutdown_admin_configured = auth_enabled and len(explicit_jwt_secret) >= 32
     security = HTTPBearer(auto_error=False)
 
     def require_auth(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
@@ -265,9 +305,27 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         except Exception as e:
             raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
 
+    def _is_secure_request(request: Request) -> bool:
+        return request.url.scheme == "https"
+
+    def _require_secure_admin(request: Request) -> None:
+        if not shutdown_admin_configured:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Secure shutdown administration requires ADMIN_USERNAME, "
+                    "ADMIN_PASSWORD, and WOLNUT_JWT_SECRET with at least 32 characters"
+                ),
+            )
+        if not _is_secure_request(request):
+            raise HTTPException(
+                status_code=426,
+                detail="Secure shutdown administration requires HTTPS",
+            )
+
     # --- helpers inside closure ---
     def _read_config_or_default() -> dict:
-        raw = load_raw_config(cfg_path)
+        raw = config_store.read()
         if raw is None:
             # return sensible defaults for fresh install
             return {
@@ -357,8 +415,73 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         for c in raw.get("clients", []) or []:
             c.setdefault("always_wake", False)
             c.setdefault("enabled", True)
+            c.setdefault("wake_enabled", True)
+            c.setdefault("mac", "")
+            c.setdefault("shutdown", {})
+            for key, value in {
+                "enabled": False,
+                "battery_percent": 20,
+                "agent_id": None,
+                "agent_port": 8184,
+            }.items():
+                c["shutdown"].setdefault(key, value)
         return raw
 
+    def _find_client(raw: dict, client_name: str) -> dict:
+        matches = [
+            client
+            for client in raw.get("clients", [])
+            if client.get("name") == client_name
+        ]
+        if not matches:
+            raise HTTPException(status_code=404, detail=f"Client {client_name} not found")
+        if len(matches) > 1:
+            raise HTTPException(status_code=409, detail=f"Client name {client_name} is ambiguous")
+        return matches[0]
+
+    def _agent_client(client: dict) -> AgentClient:
+        shutdown = client.get("shutdown", {}) or {}
+        return AgentClient(
+            client["host"],
+            int(shutdown.get("agent_port", 8184)),
+            security_store=security_store,
+        )
+
+    def _record_agent_result(
+        client_name: str,
+        *,
+        status: str,
+        source: str | None = None,
+        command_id: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        path = Path(st_path)
+        with state_lock:
+            data: dict[str, Any] = {"meta": {}, "clients": {}}
+            if path.exists():
+                try:
+                    data = json.loads(path.read_text())
+                except Exception:
+                    pass
+            data.setdefault("meta", {})
+            clients = data.setdefault("clients", {})
+            client_state = clients.setdefault(client_name, {})
+            shutdown_state = client_state.setdefault("shutdown", {})
+            shutdown_state.update(
+                {
+                    "status": status,
+                    "source": source,
+                    "command_id": command_id,
+                    "last_error": error,
+                    "updated_at": int(time.time()),
+                }
+            )
+            if status in {"paired", "online", "accepted"}:
+                shutdown_state["last_seen_at"] = int(time.time())
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(path.suffix + ".tmp")
+            temporary.write_text(json.dumps(data, indent=2, sort_keys=True))
+            temporary.replace(path)
     def _notifications_from_raw(raw: dict) -> NotificationService:
         config = notifications_config_from_dict(raw.get("notifications"))
         return NotificationService(config)
@@ -368,8 +491,13 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         return {"status": "ok", "auth_enabled": auth_enabled}
 
     @app.get("/api/auth/status")
-    def auth_status():
-        return {"auth_enabled": auth_enabled, "user": admin_user if auth_enabled else None}
+    def auth_status(request: Request):
+        return {
+            "auth_enabled": auth_enabled,
+            "user": admin_user if auth_enabled else None,
+            "shutdown_admin_configured": shutdown_admin_configured,
+            "secure_transport": _is_secure_request(request),
+        }
 
     class LoginRequest(BaseModel):
         username: str
@@ -401,8 +529,27 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         return data
 
     @app.put("/api/config")
-    def put_config(cfg: ConfigModel, user: str = Depends(require_auth)):
+    def put_config(
+        cfg: ConfigModel,
+        request: Request,
+        user: str = Depends(require_auth),
+    ):
         raw = cfg.model_dump()
+        current = _read_config_or_default()
+        current_clients = {
+            client.get("name"): client for client in current.get("clients", [])
+        }
+        for client in raw.get("clients", []):
+            previous = current_clients.get(client.get("name"), {})
+            previous_shutdown = previous.get("shutdown", {}) or {}
+            shutdown = client.get("shutdown", {}) or {}
+            if shutdown.get("agent_id") != previous_shutdown.get("agent_id"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Agent identity is managed by the secure pairing flow",
+                )
+            if previous_shutdown.get("agent_id") or shutdown.get("enabled"):
+                _require_secure_admin(request)
         # clean empty auth (so they become omitted if blank)
         if not raw["nut"].get("username"):
             raw["nut"].pop("username", None)
@@ -419,7 +566,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             for c in raw.get("clients", []):
                 if c.get("enabled", True) is False:
                     continue
-                if c.get("mac") == "auto":
+                if c.get("wake_enabled", True) and c.get("mac") == "auto":
                     host = c.get("host")
                     name = c.get("name", "?")
                     try:
@@ -436,7 +583,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                         warnings.append({"client": name, "host": host, "message": msg, "field": "mac"})
         # save
         try:
-            save_raw_config(cfg_path, raw)
+            config_store.write(raw)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to write config: {e}")
         logger.info("Config saved via WebUI to %s", cfg_path)
@@ -483,6 +630,16 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                     "online": online,
                     "always_wake": c.get("always_wake", False),
                     "enabled": enabled,
+                    "wake_enabled": c.get("wake_enabled", True),
+                    "shutdown": {
+                        **(c.get("shutdown", {}) or {}),
+                        "paired": bool((c.get("shutdown", {}) or {}).get("agent_id")),
+                        "last_result": (
+                            state.get("clients", {})
+                            .get(c["name"], {})
+                            .get("shutdown", {})
+                        ),
+                    },
                 }
             )
 
@@ -495,6 +652,145 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             "config_path": cfg_path,
             "status_path": st_path,
         }
+
+    @app.post("/api/agents/pair")
+    def pair_agent(
+        req: AgentPairRequest,
+        request: Request,
+        user: str = Depends(require_auth),
+    ):
+        _require_secure_admin(request)
+        raw = _read_config_or_default()
+        client = _find_client(raw, req.client_name)
+        try:
+            result = AgentClient(
+                client["host"],
+                req.agent_port,
+                security_store=security_store,
+            ).pair(req.pairing_code, req.fingerprint)
+        except AgentError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+
+        def persist_pairing(value: dict) -> dict:
+            target = _find_client(value, req.client_name)
+            shutdown = target.setdefault("shutdown", {})
+            shutdown.update(
+                {
+                    "enabled": False,
+                    "battery_percent": shutdown.get("battery_percent", 20),
+                    "agent_id": result["agent_id"],
+                    "agent_port": req.agent_port,
+                }
+            )
+            validate_config(value)
+            return value
+
+        config_store.update(persist_pairing)
+        _record_agent_result(req.client_name, status="paired")
+        logger.info("Agent paired for client %s by %s", req.client_name, user)
+        return {"status": "paired", **result}
+
+    @app.post("/api/agents/{client_name}/test")
+    def test_agent(
+        client_name: str,
+        request: Request,
+        user: str = Depends(require_auth),
+    ):
+        _require_secure_admin(request)
+        client = _find_client(_read_config_or_default(), client_name)
+        agent_id = (client.get("shutdown", {}) or {}).get("agent_id")
+        if not agent_id:
+            raise HTTPException(status_code=409, detail="Client agent is not paired")
+        try:
+            result = _agent_client(client).status(agent_id)
+        except AgentError as error:
+            _record_agent_result(client_name, status="failed", error=str(error))
+            raise HTTPException(status_code=502, detail=str(error)) from error
+        _record_agent_result(client_name, status="online")
+        return result
+
+    @app.post("/api/agents/{client_name}/shutdown")
+    def shutdown_agent(
+        client_name: str,
+        req: AgentShutdownRequest,
+        request: Request,
+        user: str = Depends(require_auth),
+    ):
+        _require_secure_admin(request)
+        if req.confirmation != client_name:
+            raise HTTPException(status_code=400, detail="Device name confirmation does not match")
+        raw = _read_config_or_default()
+        client = _find_client(raw, client_name)
+        agent_id = (client.get("shutdown", {}) or {}).get("agent_id")
+        if not agent_id:
+            raise HTTPException(status_code=409, detail="Client agent is not paired")
+        command_id = f"manual:{uuid.uuid4()}"
+        try:
+            result = _agent_client(client).shutdown(
+                agent_id,
+                command_id,
+                "manual",
+                ups=raw.get("nut", {}).get("ups", ""),
+            )
+        except AgentError as error:
+            _record_agent_result(
+                client_name,
+                status="failed",
+                source="manual",
+                command_id=command_id,
+                error=str(error),
+            )
+            raise HTTPException(status_code=502, detail=str(error)) from error
+        _record_agent_result(
+            client_name,
+            status="accepted",
+            source="manual",
+            command_id=command_id,
+        )
+        logger.warning("Manual shutdown accepted for %s by %s", client_name, user)
+        return result
+
+    @app.post("/api/agents/{client_name}/unpair")
+    def unpair_agent(
+        client_name: str,
+        req: AgentUnpairRequest,
+        request: Request,
+        user: str = Depends(require_auth),
+    ):
+        _require_secure_admin(request)
+        if req.confirmation != client_name:
+            raise HTTPException(status_code=400, detail="Device name confirmation does not match")
+        raw = _read_config_or_default()
+        client = _find_client(raw, client_name)
+        agent_id = (client.get("shutdown", {}) or {}).get("agent_id")
+        if not agent_id:
+            raise HTTPException(status_code=409, detail="Client agent is not paired")
+        if not req.force_local:
+            try:
+                _agent_client(client).unpair(agent_id)
+            except AgentError as error:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Remote unpair failed; retry or explicitly forget locally: {error}",
+                ) from error
+
+        def clear_pairing(value: dict) -> dict:
+            target = _find_client(value, client_name)
+            shutdown = target.setdefault("shutdown", {})
+            shutdown["enabled"] = False
+            shutdown["agent_id"] = None
+            validate_config(value)
+            return value
+
+        config_store.update(clear_pairing)
+        _record_agent_result(client_name, status="unpaired")
+        logger.warning(
+            "Agent unpaired for %s by %s%s",
+            client_name,
+            user,
+            " (local only)" if req.force_local else "",
+        )
+        return {"status": "unpaired", "local_only": req.force_local}
 
     @app.get("/api/ups")
     def get_ups(user: str = Depends(require_auth)):
