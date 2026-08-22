@@ -248,3 +248,53 @@ def test_manual_shutdown_requires_exact_device_name(tmp_path, monkeypatch, mocke
     assert rejected.status_code == 400
     assert accepted.status_code == 200
     agent.shutdown.assert_called_once()
+
+
+def test_shutdown_setting_changes_require_secure_admin(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    write_config(config_path)
+    client = TestClient(
+        create_app(config_file=str(config_path)), base_url="http://wolnut.test"
+    )
+    submitted = yaml.safe_load(config_path.read_text())
+    submitted["clients"][0]["shutdown"] = {
+        "enabled": False,
+        "battery_percent": 30,
+        "agent_id": None,
+        "agent_port": 8184,
+    }
+
+    response = client.put("/api/config", json=submitted)
+
+    assert response.status_code == 503
+    saved = yaml.safe_load(config_path.read_text())
+    assert "shutdown" not in saved["clients"][0]
+
+
+def test_stale_config_save_cannot_overwrite_pairing(tmp_path, monkeypatch):
+    initial = {
+        "nut": {"ups": "ups@localhost"},
+        "clients": [
+            {
+                "name": "server",
+                "host": "server.local",
+                "mac": "00:11:22:33:44:55",
+            }
+        ],
+    }
+    client, config_path = _secure_app_client(tmp_path, monkeypatch, initial)
+    stale = client.get("/api/config").json()
+    paired = yaml.safe_load(config_path.read_text())
+    paired["clients"][0]["shutdown"] = {
+        "enabled": False,
+        "battery_percent": 20,
+        "agent_id": "agent-new",
+        "agent_port": 8184,
+    }
+    config_path.write_text(yaml.safe_dump(paired))
+
+    response = client.put("/api/config", json=stale)
+
+    assert response.status_code == 409
+    saved = yaml.safe_load(config_path.read_text())
+    assert saved["clients"][0]["shutdown"]["agent_id"] == "agent-new"

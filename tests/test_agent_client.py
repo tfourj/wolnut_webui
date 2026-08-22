@@ -1,4 +1,5 @@
 import os
+import hashlib
 
 import pytest
 
@@ -7,7 +8,12 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
-from wolnut.agent_client import AgentError, SecurityStore, normalize_fingerprint
+from wolnut.agent_client import (
+    AgentClient,
+    AgentError,
+    SecurityStore,
+    normalize_fingerprint,
+)
 
 
 def test_normalize_fingerprint():
@@ -15,6 +21,20 @@ def test_normalize_fingerprint():
     assert normalize_fingerprint(raw) == "ab" * 32
     with pytest.raises(AgentError, match="64 hexadecimal"):
         normalize_fingerprint("not-a-fingerprint")
+
+
+def test_pairing_stops_before_sending_code_on_fingerprint_mismatch(mocker):
+    connection = mocker.patch("wolnut.agent_client.http.client.HTTPSConnection")
+    instance = connection.return_value
+    instance.sock.getpeercert.return_value = b"unexpected-certificate"
+    expected = hashlib.sha256(b"expected-certificate").hexdigest()
+
+    with pytest.raises(AgentError, match="fingerprint does not match"):
+        AgentClient("agent.local")._pinned_post(
+            "/bootstrap/pair", {"code": "must-not-be-sent"}, expected
+        )
+
+    instance.request.assert_not_called()
 
 
 def test_controller_identity_is_persistent_and_private(tmp_path):

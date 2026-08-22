@@ -570,21 +570,47 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         user: str = Depends(require_auth),
     ):
         raw = cfg.model_dump()
-        current = _read_config_or_default()
-        current_clients = {
-            client.get("name"): client for client in current.get("clients", [])
-        }
-        for client in raw.get("clients", []):
-            previous = current_clients.get(client.get("name"), {})
-            previous_shutdown = previous.get("shutdown", {}) or {}
+
+        def normalized_shutdown(client: dict) -> dict:
             shutdown = client.get("shutdown", {}) or {}
-            if shutdown.get("agent_id") != previous_shutdown.get("agent_id"):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Agent identity is managed by the secure pairing flow",
-                )
-            if previous_shutdown.get("agent_id") or shutdown.get("enabled"):
-                _require_secure_admin(request)
+            return {
+                "enabled": shutdown.get("enabled", False),
+                "battery_percent": shutdown.get("battery_percent", 20),
+                "agent_id": shutdown.get("agent_id"),
+                "agent_port": shutdown.get("agent_port", 8184),
+            }
+
+        def persist_config(current: dict) -> dict:
+            current_clients = {
+                client.get("name"): client for client in current.get("clients", [])
+            }
+            submitted_names = {client.get("name") for client in raw.get("clients", [])}
+            for client in raw.get("clients", []):
+                previous = current_clients.get(client.get("name"), {})
+                previous_shutdown = normalized_shutdown(previous)
+                shutdown = normalized_shutdown(client)
+                if shutdown["agent_id"] != previous_shutdown["agent_id"]:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "Agent pairing changed while editing; refresh the configuration "
+                            "and try again"
+                        ),
+                    )
+                if shutdown != previous_shutdown:
+                    _require_secure_admin(request)
+
+            for name, previous in current_clients.items():
+                if (
+                    name not in submitted_names
+                    and normalized_shutdown(previous)["agent_id"]
+                ):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Unpair {name} before removing the client",
+                    )
+            return raw
+
         # clean empty auth (so they become omitted if blank)
         if not raw["nut"].get("username"):
             raw["nut"].pop("username", None)
@@ -636,7 +662,9 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                         )
         # save
         try:
-            config_store.write(raw)
+            config_store.update(persist_config)
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to write config: {e}")
         logger.info("Config saved via WebUI to %s", cfg_path)
