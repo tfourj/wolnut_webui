@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useReducer, useState } from 'react'
 import {
   clearToken,
   createAgentEnrollment,
@@ -27,6 +27,7 @@ import {
   NotificationProvider,
   WolnutConfig,
 } from './api'
+import { clientNavigationReducer, INITIAL_CLIENT_NAVIGATION } from './clientNavigation'
 import {
   isAgentUpdateAvailable,
   isCertificateFingerprintValid,
@@ -1055,12 +1056,24 @@ function ClientsTab({
   const [enrollmentStatus, setEnrollmentStatus] = useState<AgentEnrollmentStatus | null>(null)
   const [manualInstallIndex, setManualInstallIndex] = useState<number | null>(null)
   const [manualCommands, setManualCommands] = useState<ManualAgentInstallCommands | null>(null)
+  const [clientNavigation, dispatchClientNavigation] = useReducer(
+    clientNavigationReducer,
+    INITIAL_CLIENT_NAVIGATION,
+  )
+  const activeClientIndex = clientNavigation.clientIndex
+  const activeClientSection = clientNavigation.section
+
+  useEffect(() => {
+    dispatchClientNavigation({ type: 'sync-client-count', clientCount: cfg.clients.length })
+  }, [cfg.clients.length])
+
   const updateClient = (idx: number, patch: Partial<WolnutConfig['clients'][number]>) => {
     const next = [...cfg.clients]
     next[idx] = { ...next[idx], ...patch }
     setCfg({ ...cfg, clients: next })
   }
   const removeClient = (idx: number) => {
+    dispatchClientNavigation({ type: 'remove-client', removedIndex: idx, previousCount: cfg.clients.length })
     setCfg({ ...cfg, clients: cfg.clients.filter((_, i) => i !== idx) })
   }
   const updateShutdown = (idx: number, patch: Partial<WolnutConfig['clients'][number]['shutdown']>) => {
@@ -1072,6 +1085,7 @@ function ClientsTab({
     })
   }
   const addClient = () => {
+    const newClientIndex = cfg.clients.length
     setCfg({
       ...cfg,
       clients: [
@@ -1093,6 +1107,7 @@ function ClientsTab({
         },
       ],
     })
+    dispatchClientNavigation({ type: 'add-client', previousCount: newClientIndex })
   }
 
   const liveMap = new Map<string, boolean>()
@@ -1316,15 +1331,7 @@ function ClientsTab({
   }
 
   return (
-    <div className="card">
-      {!shutdownAdminReady && (
-        <div className="security-warning">
-          <strong>Secure shutdown controls unavailable</strong>
-          <span>
-            Configure admin credentials and a 32-character WOLNUT_JWT_SECRET, then access Wolnut through HTTPS.
-          </span>
-        </div>
-      )}
+    <div className="card clients-card">
       {effectiveWarnings && effectiveWarnings.length > 0 && (
         <div style={{ background: '#2a2015', border: '1px solid #f1c40f', color: '#f1c40f', borderRadius: 8, padding: '10px 12px', marginBottom: 12, fontSize: 13 }}>
           <strong style={{ display: 'block', marginBottom: 4 }}>⚠ MAC resolution warning</strong>
@@ -1334,17 +1341,44 @@ function ClientsTab({
           </span>
         </div>
       )}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+      <div className="clients-heading">
         <div>
           <h2 style={{ margin: 0 }}>Clients</h2>
-          <p className="desc" style={{ margin: 0 }}>Machines to wake after outage. MAC can be "auto" to resolve via ARP.</p>
+          <p className="desc" style={{ margin: 0 }}>Select a device, then configure its main or agent settings.</p>
         </div>
         <button className="btn btn-primary" onClick={addClient}>+ Add client</button>
       </div>
 
       {cfg.clients.length === 0 && <div className="empty">No clients yet.</div>}
 
+      {cfg.clients.length > 0 && (
+        <div className="provider-tabs client-tabs" role="tablist" aria-label="Configured clients">
+          {cfg.clients.map((client, idx) => {
+            const online = liveMap.get(client.name)
+            const warning = warningMap.has(client.name)
+            return (
+              <button
+                type="button"
+                role="tab"
+                key={idx}
+                className={`provider-tab client-tab ${activeClientIndex === idx ? 'active' : ''}`}
+                aria-selected={activeClientIndex === idx}
+                onClick={() => {
+                  dispatchClientNavigation({ type: 'select-client', index: idx, clientCount: cfg.clients.length })
+                }}
+              >
+                <span className="client-tab-name">{warning ? '⚠ ' : ''}{client.name || 'Unnamed'}</span>
+                <span className={`provider-tab-status ${online === true ? 'enabled' : online === false ? 'offline' : ''}`}>
+                  {online === true ? 'Online' : online === false ? 'Offline' : 'Unknown'}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       {cfg.clients.map((c, idx) => {
+        if (idx !== activeClientIndex) return null
         const online = liveMap.get(c.name)
         const w = warningMap.get(c.name)
         const isDisabled = c.enabled === false
@@ -1355,11 +1389,11 @@ function ClientsTab({
         return (
           <div
             key={idx}
-            className="card"
-            style={{ background: '#0f1115', padding: 16, borderColor: w ? '#f1c40f' : undefined, opacity: isDisabled ? 0.6 : 1 }}
+            className="client-config-card"
+            style={{ borderColor: w ? '#f1c40f' : undefined, opacity: isDisabled ? 0.6 : 1 }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
-              <strong>#{idx + 1} — {c.name || 'Unnamed'}</strong>
+            <div className="client-config-heading">
+              <strong>{c.name || 'Unnamed'}</strong>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                 {w && (
                   <span style={{ background: '#2a2015', border: '1px solid #f1c40f', color: '#f1c40f', padding: '2px 8px', borderRadius: 999, fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -1375,133 +1409,172 @@ function ClientsTab({
               </div>
             </div>
 
-            <div className="grid2">
-              <div className="field">
-                <label>Name</label>
-                <input value={c.name} onChange={e => updateClient(idx, { name: e.target.value })} placeholder="client 1" />
-              </div>
-              <div className="field">
-                <label>Host (IP or hostname)</label>
-                <input value={c.host} onChange={e => updateClient(idx, { host: e.target.value })} placeholder="192.168.0.100" />
-              </div>
-              <div className="field">
-                <label>MAC address</label>
-                <input
-                  value={c.mac}
-                  onChange={e => updateClient(idx, { mac: e.target.value })}
-                  placeholder="38:f7:cd:c5:87:6b or auto"
-                  disabled={c.wake_enabled === false}
-                  style={warningMap.get(c.name) ? { borderColor: '#f1c40f', background: '#2a2015' } : undefined}
-                />
-                <span className="inline-help">
-                  {c.wake_enabled === false
-                    ? 'Not required when Wake-on-LAN is disabled'
-                    : 'Use "auto" to resolve via ARP at runtime'}
+            <div className="client-section-tabs" role="tablist" aria-label={`${c.name || 'Client'} configuration`}>
+              <button
+                type="button"
+                role="tab"
+                className={`client-section-tab ${activeClientSection === 'main' ? 'active' : ''}`}
+                aria-selected={activeClientSection === 'main'}
+                onClick={() => dispatchClientNavigation({ type: 'select-section', section: 'main' })}
+              >
+                Main
+              </button>
+              <button
+                type="button"
+                role="tab"
+                className={`client-section-tab ${activeClientSection === 'agent' ? 'active' : ''}`}
+                aria-selected={activeClientSection === 'agent'}
+                onClick={() => dispatchClientNavigation({ type: 'select-section', section: 'agent' })}
+              >
+                Agent
+                <span className={`client-section-status ${isPaired ? 'paired' : ''}`}>
+                  {isPaired ? 'Paired' : 'Not paired'}
                 </span>
-                {warningMap.get(c.name) && (
-                  <div style={{ background: '#2a2015', border: '1px solid #f1c40f', color: '#f1c40f', borderRadius: 6, padding: '6px 8px', fontSize: 12, marginTop: 6, display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <span>⚠</span>
-                    <span style={{ color: '#e6e8ec' }}>{warningMap.get(c.name).message} — WOL may fail until host is reachable.</span>
-                  </div>
-                )}
-              </div>
-              <div className="field">
-                <label>Actions</label>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  <button
-                    className="btn btn-ghost btn-small"
-                    disabled={c.wake_enabled === false}
-                    onClick={async () => {
-                      try {
-                        const j = await pingHost(c.host)
-                        showToast(j.online ? `${c.host} is online` : `${c.host} is offline`)
-                      } catch (e: any) {
-                        showToast(String(e.message || e))
-                      }
-                    }}
-                  >
-                    Ping
-                  </button>
-                  <button
-                    className="btn btn-ghost btn-small"
-                    disabled={c.wake_enabled === false}
-                    onClick={async () => {
-                      try {
-                        const j = await resolveMac(c.host)
-                        updateClient(idx, { mac: j.mac })
-                        showToast(`Resolved ${j.mac}`)
-                      } catch (e: any) {
-                        showToast(String(e.message || e))
-                      }
-                    }}
-                  >
-                    Resolve MAC
-                  </button>
-                  <button
-                    className="btn btn-ghost btn-small"
-                    onClick={async () => {
-                      try {
-                        await sendWolClient(c.name)
-                        showToast(`WOL sent to ${c.name}`)
-                      } catch (e: any) {
-                        // fallback to direct MAC
-                        try {
-                          await sendWol(c.mac)
-                          showToast(`WOL sent to ${c.mac}`)
-                        } catch (e2: any) {
-                          showToast(String(e2.message || e.message || e2))
-                        }
-                      }
-                    }}
-                  >
-                    Wake now
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 16, marginTop: 12, flexWrap: 'wrap', alignItems: 'center', borderTop: '1px solid #2a2e3a', paddingTop: 12 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
-                <input
-                  type="checkbox"
-                  checked={c.wake_enabled ?? true}
-                  onChange={e => updateClient(idx, { wake_enabled: e.target.checked })}
-                  style={{ width: 16, height: 16 }}
-                />
-                <span>Wake on restore</span>
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
-                <input
-                  type="checkbox"
-                  checked={!!c.always_wake}
-                  disabled={c.wake_enabled === false}
-                  onChange={e => updateClient(idx, { always_wake: e.target.checked })}
-                  style={{ width: 16, height: 16 }}
-                />
-                <span style={{ color: c.always_wake ? '#f1c40f' : '#e6e8ec' }}>Always wake</span>
-                <span style={{ color: '#9aa0ae', fontSize: 12 }}>(even if offline before outage)</span>
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
-                <input
-                  type="checkbox"
-                  checked={c.enabled ?? true}
-                  onChange={e => updateClient(idx, { enabled: e.target.checked })}
-                  style={{ width: 16, height: 16 }}
-                />
-                <span style={{ color: c.enabled === false ? '#9aa0ae' : '#e6e8ec' }}>Enabled</span>
-              </label>
-              {c.always_wake && (
-                <span style={{ background: '#2a2015', border: '1px solid #f1c40f', color: '#f1c40f', padding: '2px 8px', borderRadius: 999, fontSize: 11 }}>
-                  ⚠ Always
-                </span>
-              )}
-              {c.enabled === false && (
-                <span style={{ background: '#2a2e3a', color: '#9aa0ae', padding: '2px 8px', borderRadius: 999, fontSize: 11 }}>
-                  Disabled
-                </span>
-              )}
+              </button>
             </div>
 
-            <div className="shutdown-panel">
+            {activeClientSection === 'main' && (
+              <div className="client-section-panel" role="tabpanel" aria-label="Main configuration">
+                <div className="grid2">
+                  <div className="field">
+                    <label>Name</label>
+                    <input
+                      value={c.name}
+                      onChange={e => updateClient(idx, { name: e.target.value })}
+                      placeholder="client 1"
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Host (IP or hostname)</label>
+                    <input
+                      value={c.host}
+                      onChange={e => updateClient(idx, { host: e.target.value })}
+                      placeholder="192.168.0.100"
+                    />
+                  </div>
+                  <div className="field">
+                    <label>MAC address</label>
+                    <input
+                      value={c.mac}
+                      onChange={e => updateClient(idx, { mac: e.target.value })}
+                      placeholder="38:f7:cd:c5:87:6b or auto"
+                      disabled={c.wake_enabled === false}
+                      className={warningMap.get(c.name) ? 'warning-input' : ''}
+                    />
+                    <span className="inline-help">
+                      {c.wake_enabled === false
+                        ? 'Not required when Wake-on-LAN is disabled'
+                        : 'Use "auto" to resolve via ARP at runtime'}
+                    </span>
+                    {warningMap.get(c.name) && (
+                      <div className="mac-warning">
+                        <span>⚠</span>
+                        <span>{warningMap.get(c.name).message} — WOL may fail until host is reachable.</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="field">
+                    <label>Actions</label>
+                    <div className="client-actions">
+                      <button
+                        className="btn btn-ghost btn-small"
+                        disabled={c.wake_enabled === false}
+                        onClick={async () => {
+                          try {
+                            const j = await pingHost(c.host)
+                            showToast(j.online ? `${c.host} is online` : `${c.host} is offline`)
+                          } catch (e: any) {
+                            showToast(String(e.message || e))
+                          }
+                        }}
+                      >
+                        Ping
+                      </button>
+                      <button
+                        className="btn btn-ghost btn-small"
+                        disabled={c.wake_enabled === false}
+                        onClick={async () => {
+                          try {
+                            const j = await resolveMac(c.host)
+                            updateClient(idx, { mac: j.mac })
+                            showToast(`Resolved ${j.mac}`)
+                          } catch (e: any) {
+                            showToast(String(e.message || e))
+                          }
+                        }}
+                      >
+                        Resolve MAC
+                      </button>
+                      <button
+                        className="btn btn-ghost btn-small"
+                        onClick={async () => {
+                          try {
+                            await sendWolClient(c.name)
+                            showToast(`WOL sent to ${c.name}`)
+                          } catch (e: any) {
+                            // Fallback supports unsaved clients whose names are not available to the API yet.
+                            try {
+                              await sendWol(c.mac)
+                              showToast(`WOL sent to ${c.mac}`)
+                            } catch (e2: any) {
+                              showToast(String(e2.message || e.message || e2))
+                            }
+                          }
+                        }}
+                      >
+                        Wake now
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="client-main-toggles">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={c.wake_enabled ?? true}
+                      onChange={e => updateClient(idx, { wake_enabled: e.target.checked })}
+                    />
+                    <span>Wake on restore</span>
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={!!c.always_wake}
+                      disabled={c.wake_enabled === false}
+                      onChange={e => updateClient(idx, { always_wake: e.target.checked })}
+                    />
+                    <span className={c.always_wake ? 'warning-text' : ''}>Always wake</span>
+                    <span className="inline-help">(even if offline before outage)</span>
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={c.enabled ?? true}
+                      onChange={e => updateClient(idx, { enabled: e.target.checked })}
+                    />
+                    <span className={c.enabled === false ? 'muted-text' : ''}>Enabled</span>
+                  </label>
+                  {c.always_wake && <span className="config-pill warning">⚠ Always</span>}
+                  {c.enabled === false && <span className="config-pill">Disabled</span>}
+                </div>
+              </div>
+            )}
+
+            {activeClientSection === 'agent' && (
+              <div
+                className="shutdown-panel client-section-panel"
+                role="tabpanel"
+                aria-label="Agent configuration"
+              >
+                {!shutdownAdminReady && (
+                  <div className="security-warning">
+                    <strong>Secure shutdown controls unavailable</strong>
+                    <span>
+                      Configure admin credentials and a 32-character WOLNUT_JWT_SECRET, then access Wolnut through
+                      HTTPS.
+                    </span>
+                  </div>
+                )}
               <div className="shutdown-heading">
                 <div>
                   <strong>Secure shutdown</strong>
@@ -1663,7 +1736,8 @@ function ClientsTab({
                 )}
                 {isDirty && <span className="inline-help">Save configuration before using agent actions.</span>}
               </div>
-            </div>
+              </div>
+            )}
           </div>
         )
       })}

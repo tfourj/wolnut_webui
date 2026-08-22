@@ -279,6 +279,11 @@ a:hover { text-decoration: underline; }
   gap: 3px;
 }
 
+.shutdown-heading > .badge {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .shutdown-heading span,
 .agent-result {
   color: var(--muted);
@@ -481,6 +486,166 @@ a:hover { text-decoration: underline; }
   color: var(--success);
 }
 
+.provider-tab-status.offline {
+  background: #321414;
+  color: var(--danger);
+}
+
+.clients-heading,
+.client-config-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.clients-heading {
+  margin-bottom: 12px;
+}
+
+.client-tabs {
+  margin-bottom: 12px;
+}
+
+.client-tab {
+  min-width: 180px;
+  max-width: 260px;
+}
+
+.client-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.client-config-card {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.client-config-heading {
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.client-section-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.client-section-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.client-section-tab:hover {
+  color: var(--text);
+}
+
+.client-section-tab.active {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}
+
+.client-section-status {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #2a2e3a;
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.client-section-status.paired {
+  background: #14321f;
+  color: var(--success);
+}
+
+.client-section-panel {
+  padding-top: 16px;
+}
+
+.client-main-toggles {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.client-main-toggles label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.client-main-toggles input {
+  width: 16px;
+  height: 16px;
+}
+
+.client-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.warning-input {
+  border-color: var(--warning) !important;
+  background: #2a2015 !important;
+}
+
+.mac-warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--warning);
+  border-radius: 6px;
+  background: #2a2015;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.warning-text { color: var(--warning); }
+.muted-text { color: var(--muted); }
+
+.config-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #2a2e3a;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.config-pill.warning {
+  border: 1px solid var(--warning);
+  background: #2a2015;
+  color: var(--warning);
+}
+
+.client-section-panel.shutdown-panel {
+  margin-top: 0;
+  border-top: 0;
+}
+
 .switch-label {
   display: inline-flex;
   align-items: center;
@@ -537,5 +702,14 @@ a:hover { text-decoration: underline; }
 @media (max-width: 700px) {
   .notification-events {
     grid-template-columns: 1fr;
+  }
+
+  .clients-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .clients-heading .btn {
+    width: 100%;
   }
 }
