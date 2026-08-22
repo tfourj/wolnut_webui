@@ -118,6 +118,12 @@ func TestInstallScriptSupportsOldAndNewAgentFlags(t *testing.T) {
 			writeExecutable("id", "#!/bin/sh\necho 0\n")
 			writeExecutable("uname", "#!/bin/sh\necho x86_64\n")
 			writeExecutable("sha256sum", "#!/bin/sh\nexit 0\n")
+			writeExecutable("systemctl", `#!/bin/sh
+if [ "$1" = "is-active" ]; then
+    exit 0
+fi
+printf '%s\n' "$@" > "$FAKE_SYSTEMCTL_ARGS_FILE"
+`)
 			writeExecutable("curl", `#!/bin/sh
 output=""
 while [ "$#" -gt 0 ]; do
@@ -141,6 +147,7 @@ fi
 printf '%s\n' "$@" > "$FAKE_AGENT_ARGS_FILE"
 `)
 			argumentsFile := filepath.Join(directory, "arguments")
+			systemctlArgumentsFile := filepath.Join(directory, "systemctl-arguments")
 			command := exec.Command(
 				"/bin/sh", "install.sh",
 				"--download-base", "https://downloads.example",
@@ -152,6 +159,7 @@ printf '%s\n' "$@" > "$FAKE_AGENT_ARGS_FILE"
 				"FAKE_AGENT_BINARY="+fakeAgent,
 				"FAKE_AGENT_ARGS_FILE="+argumentsFile,
 				"FAKE_AGENT_HELP="+test.help,
+				"FAKE_SYSTEMCTL_ARGS_FILE="+systemctlArgumentsFile,
 			)
 			if output, err := command.CombinedOutput(); err != nil {
 				t.Fatalf("installer failed: %v: %s", err, output)
@@ -166,6 +174,13 @@ printf '%s\n' "$@" > "$FAKE_AGENT_ARGS_FILE"
 			}
 			if !strings.Contains(string(arguments), "--enrollment-token\none-time-token") {
 				t.Fatalf("enrollment arguments missing: %s", arguments)
+			}
+			systemctlArguments, err := os.ReadFile(systemctlArgumentsFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(systemctlArguments) != "stop\nwolnut-agent.service\n" {
+				t.Fatalf("existing agent was not stopped: %s", systemctlArguments)
 			}
 		})
 	}

@@ -134,6 +134,14 @@ run_install() {
     fi
 }
 
+if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet wolnut-agent.service; then
+    if [ -n "$privilege_command" ]; then
+        "$privilege_command" systemctl stop wolnut-agent.service
+    else
+        systemctl stop wolnut-agent.service
+    fi
+fi
+
 run_install "$privilege_command"
 
 echo "Wolnut agent installed on $listen_address"
