@@ -262,7 +262,9 @@ def _agent_script_command(script_name: str, arguments: list[str]) -> str:
 
 def _github_install_command() -> str:
     quoted = shlex.quote(GITHUB_INSTALL_SCRIPT_URL)
-    return f"curl -fsSL {quoted} | sudo bash"
+    # Use download-then-run so Proxmox/root without sudo and `curl | bash` tty issues are avoided
+    # `bash /tmp/install.sh` has a real tty for prompts, unlike `curl | bash` where stdin is the script.
+    return f"curl -fSL {quoted} -o /tmp/install.sh && bash /tmp/install.sh"
 
 
 def build_agent_manual_commands(public_url: str, agent_port: int) -> dict[str, str]:

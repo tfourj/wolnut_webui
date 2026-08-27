@@ -11,9 +11,12 @@ usage() {
     cat <<'EOF'
 Usage: install.sh [options]
 
-Run directly from GitHub:
+Run directly from GitHub (Proxmox/root without sudo):
+  curl -fsSL https://raw.githubusercontent.com/tfourj/wolnut_webui/main/agent/install.sh -o /tmp/install.sh && bash /tmp/install.sh
+  curl -fsSL https://raw.githubusercontent.com/tfourj/wolnut_webui/refs/heads/main/agent/install.sh -o /tmp/install.sh && bash /tmp/install.sh
+Alternative piped (requires /dev/tty for prompts):
+  curl -fsSL https://raw.githubusercontent.com/tfourj/wolnut_webui/main/agent/install.sh | bash
   curl -fsSL https://raw.githubusercontent.com/tfourj/wolnut_webui/main/agent/install.sh | sudo bash
-  curl -fsSL https://raw.githubusercontent.com/tfourj/wolnut_webui/refs/heads/main/agent/install.sh | sudo bash
 
 Options:
   --download-base URL       HTTPS directory containing agent release files
