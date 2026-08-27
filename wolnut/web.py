@@ -236,6 +236,10 @@ def _agent_download_base() -> str:
     return download_base
 
 
+GITHUB_INSTALL_SCRIPT_URL = "https://raw.githubusercontent.com/tfourj/wolnut_webui/main/agent/install.sh"
+GITHUB_INSTALL_SCRIPT_URL_ALT = "https://raw.githubusercontent.com/tfourj/wolnut_webui/refs/heads/main/agent/install.sh"
+
+
 def _agent_script_command(script_name: str, arguments: list[str]) -> str:
     download_base = _agent_download_base()
     quoted_base = shlex.quote(download_base)
@@ -253,72 +257,15 @@ def _agent_script_command(script_name: str, arguments: list[str]) -> str:
     ).rstrip()
 
 
-def _agent_pipe_command(
-    public_url: str, token: str = "", agent_port: int = 8184
-) -> str:
-    endpoint = public_url.rstrip("/") + "/api/agents/install.sh"
-    if not token and agent_port != 8184:
-        endpoint += f"?agent_port={agent_port}"
-    arguments = [
-        "curl",
-        "--proto",
-        "=https",
-        "--proto-redir",
-        "=https",
-        "--tlsv1.2",
-        "-fsSL",
-    ]
-    if token:
-        arguments.extend(["-H", f"Authorization: Bearer {token}"])
-    arguments.append(endpoint)
-    return shlex.join(arguments) + " | /bin/sh"
-
-
-def _agent_install_template() -> str:
-    packaged = resources.files("wolnut").joinpath("assets/install.sh")
-    try:
-        return packaged.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        development = Path(__file__).resolve().parent.parent / "agent" / "install.sh"
-        return development.read_text(encoding="utf-8")
-
-
-def build_agent_install_script(
-    *,
-    download_base: str,
-    agent_port: int,
-    enrollment_url: str = "",
-    enrollment_token: str = "",
-) -> str:
-    if not 1 <= agent_port <= 65535:
-        raise ValueError("Agent port must be between 1 and 65535")
-    values = {
-        'download_base="https://github.com/tfourj/wolnut_webui/releases/latest/download"': (
-            "download_base=" + shlex.quote(download_base)
-        ),
-        'listen_address="0.0.0.0:8184"': (
-            "listen_address=" + shlex.quote(f"0.0.0.0:{agent_port}")
-        ),
-        'enrollment_url=""': "enrollment_url=" + shlex.quote(enrollment_url),
-        'enrollment_token=""': ("enrollment_token=" + shlex.quote(enrollment_token)),
-    }
-    script = _agent_install_template()
-    for original, replacement in values.items():
-        if script.count(original) != 1:
-            raise ValueError("Packaged agent installer template is invalid")
-        script = script.replace(original, replacement, 1)
-    return script
-
-
-def build_agent_install_command(public_url: str, token: str, agent_port: int) -> str:
-    _agent_download_base()
-    return _agent_pipe_command(public_url, token, agent_port)
+def _github_install_command() -> str:
+    quoted = shlex.quote(GITHUB_INSTALL_SCRIPT_URL)
+    return f"curl -fsSL {quoted} | sudo bash"
 
 
 def build_agent_manual_commands(public_url: str, agent_port: int) -> dict[str, str]:
     _agent_download_base()
     return {
-        "install_command": _agent_pipe_command(public_url, agent_port=agent_port),
+        "install_command": _github_install_command(),
         "pairing_command": (
             'if [ "$(id -u)" -eq 0 ]; then wolnut-agent pairing-code; '
             "elif command -v sudo >/dev/null 2>&1; then sudo wolnut-agent pairing-code; "
@@ -683,6 +630,53 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         config = notifications_config_from_dict(raw.get("notifications"))
         return NotificationService(config)
 
+    # --- periodic agent version polling ---
+    def _agent_version_poller() -> None:
+        poll_interval = 30
+        # avoid starting during tests
+        if os.getenv("PYTEST_CURRENT_TEST"):
+            return
+
+        def _loop() -> None:
+            while True:
+                time.sleep(poll_interval)
+                try:
+                    raw_cfg = _read_config_or_default()
+                    for client in raw_cfg.get("clients", []) or []:
+                        shutdown = client.get("shutdown", {}) or {}
+                        agent_id = shutdown.get("agent_id")
+                        if not agent_id:
+                            continue
+                        # Poll agent for version and health; record via _record_agent_result
+                        try:
+                            result = _agent_client(client).status(agent_id)
+                            _record_agent_result(
+                                client["name"], status="online", details=result
+                            )
+                        except Exception as error:
+                            logger.debug(
+                                "Periodic agent ping failed for %s: %s",
+                                client.get("name"),
+                                error,
+                            )
+                            try:
+                                _record_agent_result(
+                                    client["name"],
+                                    status="unreachable",
+                                    error=str(error),
+                                )
+                            except Exception:
+                                pass
+                except Exception as error:
+                    logger.debug("Agent version poll error: %s", error)
+
+        thread = threading.Thread(
+            target=_loop, daemon=True, name="agent-version-poller"
+        )
+        thread.start()
+
+    _agent_version_poller()
+
     @app.get("/api/health")
     def health():
         return {"status": "ok", "auth_enabled": auth_enabled}
@@ -918,57 +912,14 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         }
 
     @app.get("/api/agents/install.sh")
-    def download_agent_installer(request: Request, agent_port: int = 8184):
-        if not _is_secure_request(request):
-            raise HTTPException(
-                status_code=426,
-                detail="Agent installation requires HTTPS",
-            )
-        authorization = request.headers.get("Authorization", "").strip()
-        enrollment_url = ""
-        enrollment_token = ""
-        if authorization:
-            scheme, separator, credential = authorization.partition(" ")
-            if separator == "" or scheme.lower() != "bearer" or not credential:
-                raise HTTPException(
-                    status_code=401,
-                    detail="Invalid agent enrollment authorization",
-                )
-            enrollment_token = credential.strip()
-            try:
-                enrollment = enrollment_store.bootstrap(enrollment_token)
-            except EnrollmentError as error:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Enrollment token is invalid, expired, or already used",
-                ) from error
-            agent_port = int(enrollment["agent_port"])
-            enrollment_url = _public_url(request) + "/api/agents/enroll"
-        if not 1 <= agent_port <= 65535:
-            raise HTTPException(
-                status_code=422,
-                detail="Agent port must be between 1 and 65535",
-            )
-        try:
-            script = build_agent_install_script(
-                download_base=_agent_download_base(),
-                agent_port=agent_port,
-                enrollment_url=enrollment_url,
-                enrollment_token=enrollment_token,
-            )
-        except (OSError, ValueError) as error:
-            raise HTTPException(
-                status_code=503,
-                detail="Agent installer is unavailable",
-            ) from error
-        return Response(
-            content=script,
-            media_type="text/x-shellscript",
-            headers={
-                "Cache-Control": "no-store",
-                "Content-Disposition": 'inline; filename="install.sh"',
-                "X-Content-Type-Options": "nosniff",
-            },
+    def download_agent_installer(request: Request):
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "Agent installer is now served directly from GitHub. Use: "
+                f"curl -fsSL {GITHUB_INSTALL_SCRIPT_URL} | sudo bash "
+                "and paste the enrollment key/certificate shown in the WebUI Quick install dialog."
+            ),
         )
 
     @app.post("/api/agents/manual-install")
@@ -1003,12 +954,19 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         except EnrollmentError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         try:
-            command = build_agent_install_command(
-                _public_url(request), created["token"], req.agent_port
-            )
+            public_url = _public_url(request)
+            enrollment_url = public_url + "/api/agents/enroll"
+            _agent_download_base()
         except ValueError as error:
             enrollment_store.fail(created["enrollment_id"], str(error))
             raise HTTPException(status_code=503, detail=str(error)) from error
+        # Expose controller CA certificate for WebUI display (key/certificate)
+        controller_ca_pem = ""
+        try:
+            identity = security_store.ensure_controller_identity()
+            controller_ca_pem = identity.ca_cert.read_text().strip()
+        except Exception:
+            pass
         logger.warning(
             "One-time agent enrollment created for %s by %s",
             req.client_name,
@@ -1017,7 +975,13 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         return {
             "enrollment_id": created["enrollment_id"],
             "expires_at": created["expires_at"],
-            "install_command": command,
+            "token": created["token"],
+            "public_url": public_url,
+            "enrollment_url": enrollment_url,
+            "agent_port": req.agent_port,
+            "controller_ca": controller_ca_pem,
+            "install_command": _github_install_command(),
+            "github_install_url": GITHUB_INSTALL_SCRIPT_URL,
         }
 
     @app.get("/api/agents/enrollments/{enrollment_id}")
