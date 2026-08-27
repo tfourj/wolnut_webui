@@ -66,30 +66,45 @@ environment:
 
 1. Add the client in Wolnut and save the configuration.
 2. In the client's **Secure shutdown** section, choose **Quick install**.
-3. Confirm the agent port and generate the command.
-4. Copy the short `curl ... | sh` command and run it on the Linux device. It
-   fetches a customized `install.sh` from Wolnut over HTTPS; the installer then
-   detects amd64 or arm64, verifies the agent binary, enrolls it, and starts the
-   hardened systemd service.
+3. Confirm the agent port and generate the one-time enrollment key and
+   certificate. Wolnut displays the enrollment key, enrollment URL
+   (`https://wolnut.example.com/api/agents/enroll`), server URL, controller CA,
+   and the GitHub install command.
+4. On the Linux device, run the installer directly from GitHub:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/tfourj/wolnut_webui/main/agent/install.sh | sudo bash
+   # alternative ref form:
+   curl -fsSL https://raw.githubusercontent.com/tfourj/wolnut_webui/refs/heads/main/agent/install.sh | sudo bash
+   ```
+
+   Paste the enrollment URL/key when prompted. The installer then pings the
+   Wolnut server before downloading, detects amd64 or arm64, verifies the agent
+   binary checksum, enrolls it, verifies the systemd service is active, and
+   confirms the enrollment before finishing.
 5. Keep the dialog open to see the live enrollment result. Test the connection,
-   then enable **Automatic shutdown**, choose a threshold, and save.
+   then enable **Automatic shutdown**, choose a threshold, and save. The WebUI
+   also pings paired agents every 30 seconds to refresh the displayed version.
 
 The installer runs directly when the current account is root, including on a
 default Proxmox host where `sudo` is not installed. For an unprivileged account
 it uses `sudo` when available. If neither condition applies, it explains how to
-log in as root with `su -` and rerun the same command.
+log in as root with `su -` and rerun the same command. The script also accepts
+non-interactive flags (`--enroll-url`, `--enrollment-token`, `--listen`,
+`--download-base`) for automation.
 
-The command sends a 256-bit enrollment token in the HTTPS Authorization header,
-not in the URL, and pipes the returned installer to `/bin/sh`. The token expires
-after 10 minutes. Wolnut stores only its SHA-256 hash, binds it to the first
-agent identity and certificate request, and invalidates older commands for the
-same client. Do not share the command while it is valid. A retry from that same
-agent is allowed if the HTTPS response was interrupted.
+The enrollment key is a 256-bit one-time token shown separately from the
+installer. It expires after 10 minutes. Wolnut stores only its SHA-256 hash,
+binds it to the first agent identity and certificate request, and invalidates
+older keys for the same client. Do not share the key while it is valid. A retry
+from that same agent is allowed if the HTTPS response was interrupted.
 
-The installer is delivered by the trusted Wolnut HTTPS origin. It downloads
-only the matching agent architecture from the configured release directory and
-verifies the separately downloaded SHA-256 file before running or installing
-the binary. Automatic enrollment does not enable battery shutdown by itself.
+The installer is fetched directly from GitHub (`raw.githubusercontent.com`),
+not from the Wolnut origin. It downloads only the matching agent architecture
+from the configured release directory and verifies the separately downloaded
+SHA-256 file before running or installing the binary. Automatic enrollment does
+not enable battery shutdown by itself. Wolnut no longer serves
+`/api/agents/install.sh` (returns 410).
 
 GitHub's bare `/releases/latest/download` address is an asset prefix and may
 return 404 by itself. The installer appends an exact asset name such as
@@ -101,8 +116,8 @@ latest release.
 Choose **Manual install** in the client's Secure shutdown section, select the
 port, and click **Show manual commands**. Wolnut provides separate commands to:
 
-1. Fetch and run `install.sh` from Wolnut without an enrollment secret; the
-   script verifies the downloaded agent binary.
+1. Fetch and run `install.sh` directly from GitHub without an enrollment
+   secret; the script verifies the downloaded agent binary.
 2. Generate the one-time pairing code and certificate fingerprint on the
    device.
 3. Return to Wolnut's certificate-pinned manual pairing dialog.
@@ -154,10 +169,11 @@ Like the installer, the uninstaller runs directly as root and falls back to
 
 ## Version display and updates
 
-After pairing or a successful **Test connection**, each client card displays
-the installed agent version. Once the agent has checked its configured release
-source, the card also shows the latest version, update status, and any safe,
-redacted error.
+Each client card displays the installed agent version after pairing. The WebUI
+polls paired agents every 30 seconds to refresh the version (also after a
+successful **Test connection**). Once the agent has checked its configured
+release source, the card also shows the latest version, update status, and any
+safe, redacted error.
 
 Choose **Check for update** for an immediate check, or enable **Automatic agent
 updates** for that device. Enabling the toggle performs a check immediately;

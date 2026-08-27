@@ -37,11 +37,14 @@ This helps reboot systems automatically after a controlled shutdown caused by a 
 ## Secure shutdown agents
 
 Shutdown management is opt-in per client. After saving a client, choose
-**Quick install** to generate a short-lived one-line command. Run it on the
-Linux systemd device to fetch `install.sh` from Wolnut over HTTPS, download the
-matching checksum-verified agent, install its hardened service, and enroll it
-automatically. The installer runs directly for root users such as a default
-Proxmox login, and uses `sudo` only when required and available.
+**Quick install** to generate a one-time enrollment key and certificate. Run the
+GitHub-hosted `install.sh` on the Linux systemd device
+(`curl -fsSL https://raw.githubusercontent.com/tfourj/wolnut_webui/main/agent/install.sh | sudo bash`),
+paste the displayed key and certificate when prompted, and let the installer
+verify the server, download the checksum-verified agent, ping Wolnut before
+finishing, and enroll automatically. The installer runs directly for root users
+such as a default Proxmox login, and uses `sudo` only when required and
+available. Paired agents are polled periodically for their version.
 
 Choose **Manual install** to install the daemon without an enrollment secret,
 then finish certificate-pinned pairing using the device's one-time code and

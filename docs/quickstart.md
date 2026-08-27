@@ -63,17 +63,21 @@ are hot-reloaded, so no restart is needed.
 
 HTTP is sufficient for initial Wake-on-LAN configuration, but agent pairing,
 automatic shutdown settings, manual shutdown, and unpairing require HTTPS.
-For an unpaired client, choose **Quick install**, copy the generated command,
-and run the short `curl ... | sh` command on the Linux device. The installer
-works directly as root on Proxmox and other systems without `sudo`, or uses
-`sudo` for an unprivileged account when it is available. Choose **Manual
-install** instead to install the daemon first and then complete
-certificate-pinned pairing with a code and fingerprint. Wolnut displays the
-live enrollment status and refreshes the client after pairing. Follow
-[Secure shutdown agent setup](agent.md) for firewall and recovery guidance.
+For an unpaired client, choose **Quick install** to generate a one-time
+enrollment key and certificate, then run the GitHub-hosted installer
+(`curl -fsSL https://raw.githubusercontent.com/tfourj/wolnut_webui/main/agent/install.sh | sudo bash`)
+on the Linux device and paste the displayed values when prompted. The installer
+pings Wolnut before completing, works directly as root on Proxmox and other
+systems without `sudo`, or uses `sudo` for an unprivileged account when
+available. Choose **Manual install** instead to install the daemon first and
+then complete certificate-pinned pairing with a code and fingerprint. Wolnut
+displays the live enrollment status and refreshes the client after pairing.
+Follow [Secure shutdown agent setup](agent.md) for firewall and recovery
+guidance.
 
-After pairing, use **Test connection** to refresh the installed agent version.
-The client card can check for a newer verified release immediately or enable
+After pairing, the WebUI regularly pings paired agents to refresh the
+installed agent version. Use **Test connection** for an immediate check. The
+client card can check for a newer verified release immediately or enable
 automatic checks for that individual device.
 
 Optional notifications can be configured under **Notifications**. Enable a
