@@ -11,10 +11,12 @@ usage() {
     cat <<'EOF'
 Usage: install.sh [options]
 
-Run directly from GitHub (Proxmox/root without sudo):
+One command (auto-detects sudo, terminal, OS/arch):
+  bash <(curl -fsSL https://raw.githubusercontent.com/tfourj/wolnut_webui/main/agent/install.sh)
+  bash <(curl -fsSL https://raw.githubusercontent.com/tfourj/wolnut_webui/refs/heads/main/agent/install.sh)
+
+Fallbacks (also auto-detect inside script):
   curl -fsSL https://raw.githubusercontent.com/tfourj/wolnut_webui/main/agent/install.sh -o /tmp/install.sh && bash /tmp/install.sh
-  curl -fsSL https://raw.githubusercontent.com/tfourj/wolnut_webui/refs/heads/main/agent/install.sh -o /tmp/install.sh && bash /tmp/install.sh
-Alternative piped (requires /dev/tty for prompts):
   curl -fsSL https://raw.githubusercontent.com/tfourj/wolnut_webui/main/agent/install.sh | bash
   curl -fsSL https://raw.githubusercontent.com/tfourj/wolnut_webui/main/agent/install.sh | sudo bash
 

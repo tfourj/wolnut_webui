@@ -270,7 +270,7 @@ def test_one_line_enrollment_installs_and_pairs_agent(tmp_path, monkeypatch):
     command = payload["install_command"]
     assert "raw.githubusercontent.com/tfourj/wolnut_webui" in command
     assert "install.sh" in command
-    assert "| sudo bash" in command or "| /bin/sh" in command
+    assert "bash <(curl" in command or "| sudo bash" in command or "| /bin/sh" in command
     token = payload["token"]
     assert payload["enrollment_url"] == "https://wolnut.example/api/agents/enroll"
     assert payload["public_url"] == "https://wolnut.example"
