@@ -154,6 +154,29 @@ export async function saveConfig(cfg: WolnutConfig) {
 export async function fetchStatus() {
   const res = await authFetch('/api/status')
   if (!res.ok) throw new Error(await res.text())
+  return res.json() as Promise<{
+    ups: Record<string, string>
+    ups_error: string | null
+    upsc_available: boolean
+    state: any
+    clients: any[]
+    config_path: string
+    status_path: string
+    latest_agent_version: string | null
+    latest_agent_checked_at: number | null
+    latest_agent_error: string | null
+  }>
+}
+
+export async function fetchLatestAgentVersion() {
+  const res = await authFetch('/api/agents/latest')
+  if (!res.ok) throw new Error(await res.text())
+  return res.json() as Promise<{ version: string | null; checked_at: number; error: string | null }>
+}
+
+export async function refreshLatestAgentVersion() {
+  const res = await authFetch('/api/agents/latest/refresh', { method: 'POST' })
+  if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
 

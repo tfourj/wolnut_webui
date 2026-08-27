@@ -2,10 +2,13 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shlex
 import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from importlib import resources
 from pathlib import Path
@@ -273,6 +276,133 @@ def build_agent_manual_commands(public_url: str, agent_port: int) -> dict[str, s
         ),
         "uninstall_command": _agent_script_command("uninstall.sh", []),
     }
+
+
+# ---------------------------------------------------------------------------
+# Global latest agent version fetching (controller-side)
+# ---------------------------------------------------------------------------
+
+_STABLE_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+_global_latest: dict[str, Any] = {
+    "version": None,
+    "protocol_version": None,
+    "checked_at": 0,
+    "error": None,
+}
+_global_latest_lock = threading.RLock()
+
+
+def _verify_manifest_checksum(
+    data: bytes, checksum_data: bytes, asset_name: str
+) -> None:
+    text = checksum_data.decode().strip()
+    parts = text.split()
+    if len(parts) != 2 or parts[1].lstrip("*") != asset_name:
+        raise ValueError("checksum file does not match expected asset")
+    checksum = parts[0].lower()
+    if len(checksum) != 64 or not re.fullmatch(r"[0-9a-f]{64}", checksum):
+        raise ValueError("checksum must contain 64 hexadecimal characters")
+    digest = hashlib.sha256(data).hexdigest().lower()
+    if digest != checksum:
+        raise ValueError("download checksum does not match")
+
+
+def _fetch_latest_version_sync(timeout: int = 15) -> dict[str, Any]:
+    base = _agent_download_base()
+    manifest_name = "agent-release.json"
+    manifest_url = base + "/" + manifest_name
+    checksum_url = manifest_url + ".sha256"
+    headers = {"User-Agent": "wolnut-webui/latest-poller"}
+    ctx = None
+    # Use default SSL context (system CAs)
+    try:
+        req = urllib.request.Request(manifest_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+            if resp.status != 200:
+                raise ValueError(f"manifest returned status {resp.status}")
+            data = resp.read(1024 * 1024 + 1)
+            if len(data) > 1024 * 1024:
+                raise ValueError("manifest exceeds size limit")
+        req2 = urllib.request.Request(checksum_url, headers=headers)
+        with urllib.request.urlopen(req2, timeout=timeout, context=ctx) as resp:
+            if resp.status != 200:
+                raise ValueError(f"checksum returned status {resp.status}")
+            checksum_data = resp.read(1024 * 10)
+        _verify_manifest_checksum(data, checksum_data, manifest_name)
+        manifest = json.loads(data.decode())
+        version = str(manifest.get("version", "")).strip()
+        protocol_version = manifest.get("protocol_version")
+        if not _STABLE_VERSION_RE.match(version):
+            raise ValueError(f"release version must use stable x.y.z format: {version}")
+        if protocol_version != 1:
+            raise ValueError(f"release protocol version incompatible: {protocol_version}")
+        return {
+            "version": version,
+            "protocol_version": protocol_version,
+            "checked_at": int(time.time()),
+            "error": None,
+        }
+    except Exception as e:
+        return {
+            "version": None,
+            "protocol_version": None,
+            "checked_at": int(time.time()),
+            "error": str(e),
+        }
+
+
+def _get_global_latest() -> dict[str, Any]:
+    with _global_latest_lock:
+        return dict(_global_latest)
+
+
+def _set_global_latest(result: dict[str, Any]) -> None:
+    with _global_latest_lock:
+        _global_latest.update(result)
+
+
+def _poller_should_run() -> bool:
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return False
+    if os.getenv("WOLNUT_AGENT_LATEST_FETCH", "true").lower() in ("0", "false", "no", "off"):
+        return False
+    return True
+
+
+def _global_latest_poller() -> None:
+    if not _poller_should_run():
+        return
+    try:
+        interval = int(os.getenv("WOLNUT_AGENT_LATEST_INTERVAL", "300"))
+    except ValueError:
+        interval = 300
+    interval = max(60, interval)
+
+    def _loop() -> None:
+        # immediate fetch
+        try:
+            result = _fetch_latest_version_sync()
+            _set_global_latest(result)
+            if result["version"]:
+                logger.info("Fetched latest agent version %s", result["version"])
+            elif result["error"]:
+                logger.debug("Latest agent fetch failed: %s", result["error"])
+        except Exception as e:
+            logger.debug("Latest agent initial fetch error: %s", e)
+        while True:
+            time.sleep(interval)
+            try:
+                result = _fetch_latest_version_sync()
+                _set_global_latest(result)
+                if result["version"]:
+                    logger.info("Fetched latest agent version %s", result["version"])
+                elif result["error"]:
+                    logger.debug("Latest agent fetch failed: %s", result["error"])
+            except Exception as e:
+                logger.debug("Latest agent poll error: %s", e)
+
+    thread = threading.Thread(target=_loop, daemon=True, name="global-latest-poller")
+    thread.start()
 
 
 # ---------------------------------------------------------------------------
@@ -642,6 +772,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                 time.sleep(poll_interval)
                 try:
                     raw_cfg = _read_config_or_default()
+                    global_latest = _get_global_latest()
                     for client in raw_cfg.get("clients", []) or []:
                         shutdown = client.get("shutdown", {}) or {}
                         agent_id = shutdown.get("agent_id")
@@ -650,6 +781,15 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                         # Poll agent for version and health; record via _record_agent_result
                         try:
                             result = _agent_client(client).status(agent_id)
+                            # Merge global latest_version so display is always correct
+                            # (agent's own latest may be stale if auto_update disabled)
+                            if global_latest.get("version"):
+                                merged = dict(result)
+                                merged["latest_version"] = global_latest["version"]
+                                # also propagate checked_at if global is newer
+                                if global_latest.get("checked_at"):
+                                    merged["update_checked_at"] = global_latest["checked_at"]
+                                result = merged
                             _record_agent_result(
                                 client["name"], status="online", details=result
                             )
@@ -676,6 +816,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         thread.start()
 
     _agent_version_poller()
+    _global_latest_poller()
 
     @app.get("/api/health")
     def health():
@@ -871,6 +1012,9 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             except Exception as e:
                 state = {"error": str(e)}
 
+        # global latest version (controller-side fetch every few minutes)
+        global_latest = _get_global_latest()
+
         # client online checks
         clients_status = []
         for c in raw_cfg.get("clients", []):
@@ -880,6 +1024,18 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                 online = is_client_online(c["host"])
             else:
                 online = False
+            last_result = (
+                state.get("clients", {}).get(c["name"], {}).get("shutdown", {})
+            )
+            # Merge global latest_version into last_result for correct display
+            # (agent pings provide `version` (installed), global fetch provides `latest_version`)
+            effective_last = dict(last_result) if isinstance(last_result, dict) else {}
+            global_version = global_latest.get("version") if isinstance(global_latest, dict) else None
+            if global_version and _STABLE_VERSION_RE.match(str(global_version)):
+                # Controller view is authoritative; ensure UI shows latest even if agent hasn't polled
+                effective_last["latest_version"] = global_version
+                if global_latest.get("checked_at"):
+                    effective_last["global_update_checked_at"] = global_latest["checked_at"]
             clients_status.append(
                 {
                     "name": c["name"],
@@ -892,11 +1048,7 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                     "shutdown": {
                         **(c.get("shutdown", {}) or {}),
                         "paired": bool((c.get("shutdown", {}) or {}).get("agent_id")),
-                        "last_result": (
-                            state.get("clients", {})
-                            .get(c["name"], {})
-                            .get("shutdown", {})
-                        ),
+                        "last_result": effective_last,
                     },
                 }
             )
@@ -909,7 +1061,26 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
             "clients": clients_status,
             "config_path": cfg_path,
             "status_path": st_path,
+            "latest_agent_version": global_latest.get("version") if isinstance(global_latest, dict) else None,
+            "latest_agent_protocol_version": global_latest.get("protocol_version") if isinstance(global_latest, dict) else None,
+            "latest_agent_checked_at": global_latest.get("checked_at") if isinstance(global_latest, dict) else None,
+            "latest_agent_error": global_latest.get("error") if isinstance(global_latest, dict) else None,
         }
+
+    @app.get("/api/agents/latest")
+    def get_latest_agent_version(user: str = Depends(require_auth)):
+        return _get_global_latest()
+
+    @app.post("/api/agents/latest/refresh")
+    def refresh_latest_agent_version(
+        request: Request, user: str = Depends(require_auth)
+    ):
+        _require_secure_admin(request)
+        result = _fetch_latest_version_sync()
+        _set_global_latest(result)
+        if result.get("error"):
+            raise HTTPException(status_code=502, detail=result["error"])
+        return result
 
     @app.get("/api/agents/install.sh")
     def download_agent_installer(request: Request):

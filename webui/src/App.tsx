@@ -1426,7 +1426,9 @@ function ClientsTab({
         const agentStatus = statusMap.get(c.name)?.shutdown
         const agentDetails = agentStatus?.last_result || {}
         const isPaired = !!c.shutdown.agent_id
-        const updateAvailable = isAgentUpdateAvailable(agentDetails.version, agentDetails.latest_version)
+        const globalLatest = (status as any)?.latest_agent_version || null
+        const effectiveLatest = agentDetails.latest_version || globalLatest || null
+        const updateAvailable = isAgentUpdateAvailable(agentDetails.version, effectiveLatest || undefined)
         return (
           <div
             key={idx}
@@ -1647,9 +1649,9 @@ function ClientsTab({
                   <span>
                     Installed version: <strong>{agentDetails.version || 'unknown'}</strong>
                   </span>
-                  {agentDetails.latest_version && (
+                  {effectiveLatest && (
                     <span>
-                      Latest version: <strong>{agentDetails.latest_version}</strong>
+                      Latest version: <strong>{effectiveLatest}</strong>
                     </span>
                   )}
                   {updateAvailable && <span className="badge update-available">Update available</span>}
