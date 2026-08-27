@@ -78,8 +78,22 @@ done
 # ---------------------------------------------------------------------------
 # Interactive prompts (when not provided via flags)
 # ---------------------------------------------------------------------------
+# When run as `curl ... | bash` stdin is the script, not the terminal.
+# Reattach to /dev/tty so prompts work on Proxmox/root without sudo.
+if [ ! -t 0 ] && [ -e /dev/tty ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    # shellcheck disable=SC2094
+    exec < /dev/tty 2>/dev/null || true
+fi
+if [ ! -t 2 ] && [ -e /dev/tty ] && [ -w /dev/tty ]; then
+    exec 2> /dev/tty 2>/dev/null || true
+fi
+
 is_tty() {
-    [ -t 0 ]
+    [ -t 0 ] || { [ -e /dev/tty ] && [ -r /dev/tty ] && [ -w /dev/tty ]; }
+}
+
+has_interactive_terminal() {
+    is_tty
 }
 
 trim() {
@@ -90,6 +104,15 @@ trim() {
     # remove trailing
     trimmed="${trimmed%"${trimmed##*[! \t\r\n]}"}"
     printf '%s' "$trimmed"
+}
+
+# Read from terminal even when stdin is a pipe (curl | bash)
+_read_from_tty() {
+    if [ -e /dev/tty ] && [ -r /dev/tty ]; then
+        IFS= read -r "$1" < /dev/tty 2>/dev/null || IFS= read -r "$1" || true
+    else
+        IFS= read -r "$1" || true
+    fi
 }
 
 prompt_value() {
@@ -105,13 +128,20 @@ prompt_value() {
     fi
 
     if [ "$is_secret" = "true" ]; then
-        # disable echo for token input
-        stty -echo 2>/dev/null || true
-        IFS= read -r input_value || input_value=""
-        stty echo 2>/dev/null || true
-        printf '\n' >&2
+        # disable echo for token input - try tty first
+        if [ -e /dev/tty ]; then
+            stty -echo < /dev/tty 2>/dev/null || stty -echo 2>/dev/null || true
+            _read_from_tty input_value
+            stty echo < /dev/tty 2>/dev/null || stty echo 2>/dev/null || true
+            printf '\n' >&2
+        else
+            stty -echo 2>/dev/null || true
+            IFS= read -r input_value || input_value=""
+            stty echo 2>/dev/null || true
+            printf '\n' >&2
+        fi
     else
-        IFS= read -r input_value || input_value=""
+        _read_from_tty input_value
     fi
 
     input_value="$(trim "$input_value")"
@@ -123,7 +153,7 @@ prompt_value() {
 }
 
 if [ -z "$enrollment_url" ] && [ -z "$enrollment_token" ]; then
-    if is_tty; then
+    if has_interactive_terminal; then
         interactive_mode=true
         echo "" >&2
         echo "Wolnut agent quick install" >&2
@@ -179,10 +209,13 @@ if [ -z "$enrollment_url" ] && [ -z "$enrollment_token" ]; then
     else
         # Non-interactive without token -> guide user
         echo "No enrollment token provided and no terminal for prompts." >&2
-        echo "Run interactively:" >&2
-        echo "  curl -fsSL https://raw.githubusercontent.com/tfourj/wolnut_webui/main/agent/install.sh | sudo bash" >&2
-        echo "Or provide flags:" >&2
-        echo "  .../install.sh --enroll-url https://wolnut.example.com/api/agents/enroll --enrollment-token <token>" >&2
+        echo "Options:" >&2
+        echo "  1) Download then run (works on Proxmox/root without sudo):" >&2
+        echo "     curl -fsSL https://raw.githubusercontent.com/tfourj/wolnut_webui/main/agent/install.sh -o /tmp/install.sh && bash /tmp/install.sh" >&2
+        echo "  2) Provide flags non-interactively (via pipe):" >&2
+        echo "     curl -fsSL https://raw.githubusercontent.com/tfourj/wolnut_webui/main/agent/install.sh | bash -s -- --enroll-url https://wolnut.example.com/api/agents/enroll --enrollment-token <token>" >&2
+        echo "  3) Interactive via pipe (requires /dev/tty):" >&2
+        echo "     curl -fsSL https://raw.githubusercontent.com/tfourj/wolnut_webui/main/agent/install.sh | bash" >&2
         exit 2
     fi
 fi
@@ -231,7 +264,7 @@ if [ -n "$enrollment_url" ]; then
             echo "Verify WOLNUT_PUBLIC_URL, reverse proxy, and network connectivity before continuing." >&2
             if [ "$interactive_mode" = true ]; then
                 printf 'Continue anyway? [y/N]: ' >&2
-                IFS= read -r confirm || confirm=""
+                _read_from_tty confirm || confirm=""
                 case "$confirm" in
                     y|Y|yes|YES) echo "Continuing despite failed health check..." >&2 ;;
                     *) echo "Aborted. Fix server connectivity and retry." >&2; exit 1 ;;
