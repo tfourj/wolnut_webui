@@ -448,8 +448,8 @@ func TestUpdatePolicyIsPersistedAndStartsCheck(t *testing.T) {
 	service.autoUpdateMu.Lock()
 	scheduled := service.autoUpdateStop != nil
 	service.autoUpdateMu.Unlock()
-	if !scheduled {
-		t.Fatal("automatic update scheduler was not started")
+	if scheduled {
+		t.Fatal("automatic update scheduler should not be started (now controller-driven)")
 	}
 
 	disableRequest := httptest.NewRequest(http.MethodPost, "/v1/update-policy", strings.NewReader(`{"enabled":false}`))

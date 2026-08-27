@@ -536,11 +536,10 @@ func (s *server) handleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "configured", "auto_update": request.Enabled})
+	// Auto-update periodic scheduling is now controller-driven (WebUI triggers POST /v1/update every 6h).
+	// Keep immediate check on enable for fast feedback.
 	if request.Enabled {
-		s.startAutoUpdateScheduler(6 * time.Hour)
 		s.startUpdate("automatic")
-	} else {
-		s.stopAutoUpdateScheduler()
 	}
 }
 
@@ -766,7 +765,7 @@ func (s *server) handleUnpair(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not reset pairing")
 		return
 	}
-	s.stopAutoUpdateScheduler()
+	// No local scheduler to stop; controller drives updates
 	writeJSON(w, http.StatusOK, map[string]any{"status": "unpaired"})
 }
 
@@ -1187,9 +1186,8 @@ func runServe(stateDir, listen, downloadBase string) error {
 			binaryPath:   filepath.Join(stateDir, "wolnut-agent"),
 		},
 	}
-	if state.AutoUpdate {
-		service.startAutoUpdateScheduler(time.Minute)
-	}
+	// Auto-update is now controller-driven (WebUI triggers POST /v1/update);
+	// agent no longer self-schedules.
 	httpServer := &http.Server{
 		Addr:              listen,
 		Handler:           service.routes(),

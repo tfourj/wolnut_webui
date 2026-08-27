@@ -822,6 +822,74 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
     _agent_version_poller()
     _global_latest_poller()
 
+    # --- controller-driven auto-update scheduler (WebUI triggers, not agent) ---
+    def _agent_auto_update_poller() -> None:
+        if os.getenv("PYTEST_CURRENT_TEST"):
+            return
+        try:
+            interval = int(os.getenv("WOLNUT_AGENT_AUTO_UPDATE_INTERVAL", "21600"))
+        except ValueError:
+            interval = 21600
+        interval = max(60, interval)
+        # track last triggered per client to avoid overlapping
+        last_triggered: dict[str, float] = {}
+
+        def _loop() -> None:
+            while True:
+                time.sleep(interval)
+                try:
+                    raw_cfg = _read_config_or_default()
+                    for client in raw_cfg.get("clients", []) or []:
+                        shutdown = client.get("shutdown", {}) or {}
+                        if not shutdown.get("auto_update"):
+                            continue
+                        agent_id = shutdown.get("agent_id")
+                        if not agent_id:
+                            continue
+                        if not client.get("enabled", True):
+                            continue
+                        now = time.time()
+                        # avoid re-triggering too soon if previous was recent
+                        if now - last_triggered.get(client["name"], 0) < interval - 10:
+                            continue
+                        last_triggered[client["name"]] = now
+                        try:
+                            result = _agent_client(client).update(agent_id)
+                            _record_agent_result(
+                                client["name"], status="update_checking", details=result
+                            )
+                            logger.info(
+                                "Controller triggered auto-update check for %s", client["name"]
+                            )
+                        except Exception as error:
+                            # 409 = already running, log at debug
+                            msg = str(error)
+                            if "already running" in msg.lower():
+                                logger.debug(
+                                    "Auto-update already running for %s: %s", client["name"], msg
+                                )
+                            else:
+                                logger.debug(
+                                    "Controller auto-update trigger failed for %s: %s",
+                                    client["name"],
+                                    msg,
+                                )
+                                try:
+                                    _record_agent_result(
+                                        client["name"], status="update_failed", error=msg
+                                    )
+                                except Exception:
+                                    pass
+                except Exception as error:
+                    logger.debug("Agent auto-update poll error: %s", error)
+
+        thread = threading.Thread(
+            target=_loop, daemon=True, name="agent-auto-update-poller"
+        )
+        thread.start()
+
+    _agent_auto_update_poller()
+
     @app.get("/api/health")
     def health():
         return {"status": "ok", "auth_enabled": auth_enabled}
