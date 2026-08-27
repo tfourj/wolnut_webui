@@ -203,13 +203,30 @@ if [ -z "$enrollment_url" ] && [ -z "$enrollment_token" ]; then
             exit 2
         fi
 
-        # Prompt for listen address with default
-        listen_input=""
-        prompt_value "Agent listen address" "$listen_address" listen_input false
-        listen_input="$(trim "$listen_input")"
-        if [ -n "$listen_input" ]; then
-            listen_address="$listen_input"
-        fi
+        # Prompt for listen address with Y/n default
+        use_default_input=""
+        prompt_value "Use default listen address ($listen_address) (Y/n)" "Y" use_default_input false
+        use_default_input="$(trim "$use_default_input")"
+        # Normalize to lower for comparison
+        use_default_lower="$(printf '%s' "$use_default_input" | tr '[:upper:]' '[:lower:]')"
+        case "$use_default_lower" in
+            ""|y|yes)
+                # keep default listen_address
+                ;;
+            n|no)
+                listen_input=""
+                prompt_value "Agent listen address" "" listen_input false
+                listen_input="$(trim "$listen_input")"
+                if [ -n "$listen_input" ]; then
+                    listen_address="$listen_input"
+                else
+                    echo "No listen address entered, using default $listen_address" >&2
+                fi
+                ;;
+            *)
+                # treat any other input as default for convenience
+                ;;
+        esac
 
         echo "" >&2
     else
