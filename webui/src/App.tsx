@@ -1831,27 +1831,57 @@ function ClientsTab({
                 </div>
                 <div className="field">
                   <label>1. Run on {cfg.clients[installIndex].host} (from GitHub)</label>
-                  <textarea
-                    className="install-command"
-                    value={installCommand}
-                    readOnly
-                    rows={3}
-                    spellCheck={false}
-                  />
-                  <button
-                    className="btn btn-ghost btn-small"
-                    onClick={() => copyCommand(installCommand, 'GitHub install command')}
-                  >
-                    Copy GitHub command
-                  </button>
-                  {githubInstallUrl && (
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      value={installCommand}
+                      readOnly
+                      style={{ flex: 1 }}
+                      spellCheck={false}
+                    />
+                    <button
+                      className="btn btn-ghost btn-small"
+                      onClick={() => copyCommand(installCommand, 'GitHub install command')}
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  {githubInstallUrl && githubInstallUrl !== installCommand && (
                     <span className="inline-help">
                       Direct URL: <code>{githubInstallUrl}</code>
                     </span>
                   )}
                 </div>
                 <div className="field">
-                  <label>2. Enrollment key (paste when prompted)</label>
+                  <label>2. Enrollment URL (paste first when prompted)</label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      value={enrollmentUrl || publicUrl}
+                      readOnly
+                      style={{ flex: 1 }}
+                      spellCheck={false}
+                    />
+                    <button
+                      className="btn btn-ghost btn-small"
+                      onClick={() => copyCommand(enrollmentUrl || publicUrl, 'Enrollment URL')}
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  {enrollmentUrl && publicUrl && enrollmentUrl !== publicUrl && (
+                    <span className="inline-help">
+                      Public URL: <code>{publicUrl}</code>{' '}
+                      <button
+                        className="btn btn-ghost btn-small"
+                        style={{ padding: '2px 6px', marginLeft: 6 }}
+                        onClick={() => copyCommand(publicUrl, 'Public URL')}
+                      >
+                        Copy
+                      </button>
+                    </span>
+                  )}
+                </div>
+                <div className="field">
+                  <label>3. Enrollment key (paste second when prompted)</label>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <input
                       value={showToken ? enrollmentToken : enrollmentToken ? '•'.repeat(Math.min(enrollmentToken.length, 32)) : ''}
@@ -1868,53 +1898,30 @@ function ClientsTab({
                       className="btn btn-ghost btn-small"
                       onClick={() => copyCommand(enrollmentToken, 'Enrollment key')}
                     >
-                      Copy key
+                      Copy
                     </button>
-                  </div>
-                </div>
-                <div className="field">
-                  <label>3. Certificate / Server URL (paste when prompted)</label>
-                  <textarea
-                    className="install-command"
-                    value={enrollmentUrl || publicUrl}
-                    readOnly
-                    rows={2}
-                    spellCheck={false}
-                  />
-                  <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-                    <button
-                      className="btn btn-ghost btn-small"
-                      onClick={() => copyCommand(enrollmentUrl || publicUrl, 'Enrollment URL')}
-                    >
-                      Copy enrollment URL
-                    </button>
-                    {publicUrl && publicUrl !== enrollmentUrl && (
-                      <button
-                        className="btn btn-ghost btn-small"
-                        onClick={() => copyCommand(publicUrl, 'Public URL')}
-                      >
-                        Copy public URL
-                      </button>
-                    )}
                   </div>
                 </div>
                 {controllerCa && (
-                  <div className="field">
-                    <label>Controller CA certificate</label>
-                    <textarea
-                      className="install-command"
-                      value={controllerCa}
-                      readOnly
-                      rows={6}
-                      spellCheck={false}
-                    />
-                    <button
-                      className="btn btn-ghost btn-small"
-                      onClick={() => copyCommand(controllerCa, 'Controller CA')}
-                    >
-                      Copy CA certificate
-                    </button>
-                  </div>
+                  <details className="uninstall-details" style={{ marginTop: 8 }}>
+                    <summary>Controller CA certificate (optional)</summary>
+                    <div style={{ marginTop: 8 }}>
+                      <textarea
+                        className="install-command"
+                        value={controllerCa}
+                        readOnly
+                        rows={6}
+                        spellCheck={false}
+                      />
+                      <button
+                        className="btn btn-ghost btn-small"
+                        style={{ marginTop: 6 }}
+                        onClick={() => copyCommand(controllerCa, 'Controller CA')}
+                      >
+                        Copy CA certificate
+                      </button>
+                    </div>
+                  </details>
                 )}
                 <p className="desc">
                   On the device the installer will ask for the enrollment URL and the one-time key shown above.
