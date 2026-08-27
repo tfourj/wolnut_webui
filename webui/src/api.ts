@@ -240,6 +240,12 @@ export interface AgentEnrollment {
   enrollment_id: string
   expires_at: number
   install_command: string
+  token: string
+  public_url: string
+  enrollment_url: string
+  agent_port: number
+  controller_ca: string
+  github_install_url: string
 }
 
 export interface AgentEnrollmentStatus {

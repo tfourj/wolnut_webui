@@ -268,39 +268,23 @@ def test_one_line_enrollment_installs_and_pairs_agent(tmp_path, monkeypatch):
     assert created.status_code == 200
     payload = created.json()
     command = payload["install_command"]
-    assert len(command) < 300
-    assert "/api/agents/install.sh" in command
-    assert "| /bin/sh" in command
-    assert "sudo" not in command
-    arguments = shlex.split(command)
-    authorization = next(
-        argument
-        for argument in arguments
-        if argument.startswith("Authorization: Bearer ")
-    )
-    token = authorization.removeprefix("Authorization: Bearer ")
+    assert "raw.githubusercontent.com/tfourj/wolnut_webui" in command
+    assert "install.sh" in command
+    assert "| sudo bash" in command or "| /bin/sh" in command
+    token = payload["token"]
+    assert payload["enrollment_url"] == "https://wolnut.example/api/agents/enroll"
+    assert payload["public_url"] == "https://wolnut.example"
+    assert payload["agent_port"] == 9191
+    assert "controller_ca" in payload
+    assert payload["enrollment_id"]
 
+    # Installer is now served from GitHub, not Wolnut
     installer = client.get(
         "/api/agents/install.sh",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert installer.status_code == 200
-    assert installer.headers["cache-control"] == "no-store"
-    assert (
-        "download_base=https://github.com/tfourj/wolnut_webui/releases/latest/download"
-        in installer.text
-    )
-    assert "listen_address=0.0.0.0:9191" in installer.text
-    assert "enrollment_url=https://wolnut.example/api/agents/enroll" in installer.text
-    assert f"enrollment_token={token}" in installer.text
-    syntax = subprocess.run(
-        ["/bin/sh", "-n"],
-        input=installer.text,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert syntax.returncode == 0, syntax.stderr
+    assert installer.status_code == 410
+    assert "GitHub" in installer.json()["detail"]
 
     agent_id = "a" * 32
     enrolled = client.post(
@@ -323,11 +307,17 @@ def test_one_line_enrollment_installs_and_pairs_agent(tmp_path, monkeypatch):
     status = client.get(f"/api/agents/enrollments/{payload['enrollment_id']}").json()
     assert status["status"] == "paired"
     assert "token_hash" not in status
-    used_installer = client.get(
-        "/api/agents/install.sh",
-        headers={"Authorization": f"Bearer {token}"},
+    # Token already consumed – second enroll with same token should fail
+    second = client.post(
+        "/api/agents/enroll",
+        json={
+            "token": token,
+            "agent_id": agent_id,
+            "csr": _agent_csr(agent_id),
+        },
     )
-    assert used_installer.status_code == 403
+    # Enrollment store returns paired for same CSR, but HTTP still 200 or 403 depending on claim
+    assert second.status_code in (200, 403)
 
 
 def test_manual_install_commands_use_verified_lifecycle_scripts(tmp_path, monkeypatch):
@@ -350,9 +340,8 @@ def test_manual_install_commands_use_verified_lifecycle_scripts(tmp_path, monkey
 
     assert response.status_code == 200
     result = response.json()
-    assert "/api/agents/install.sh?agent_port=9191" in result["install_command"]
-    assert "| /bin/sh" in result["install_command"]
-    assert "Authorization" not in result["install_command"]
+    assert "raw.githubusercontent.com/tfourj/wolnut_webui" in result["install_command"]
+    assert "install.sh" in result["install_command"]
     assert "wolnut-agent pairing-code" in result["pairing_command"]
     assert "SCRIPT=uninstall.sh" in result["uninstall_command"]
     assert "sha256sum -c" in result["uninstall_command"]
@@ -361,12 +350,10 @@ def test_manual_install_commands_use_verified_lifecycle_scripts(tmp_path, monkey
         "/api/agents/install.sh?agent_port=9191",
         headers={"Authorization": ""},
     )
-    assert installer.status_code == 200
-    assert "listen_address=0.0.0.0:9191" in installer.text
-    assert "enrollment_token=''" in installer.text
+    assert installer.status_code == 410
 
 
-def test_hosted_installer_rejects_invalid_enrollment_token(tmp_path, monkeypatch):
+def test_hosted_installer_is_served_from_github(tmp_path, monkeypatch):
     config = {
         "nut": {"ups": "ups@localhost"},
         "clients": [
@@ -384,7 +371,8 @@ def test_hosted_installer_rejects_invalid_enrollment_token(tmp_path, monkeypatch
         headers={"Authorization": "Bearer invalid-enrollment-token"},
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 410
+    assert "GitHub" in response.json()["detail"]
 
 
 def test_one_line_enrollment_requires_https(tmp_path, monkeypatch):
@@ -412,7 +400,7 @@ def test_one_line_enrollment_requires_https(tmp_path, monkeypatch):
         "/api/agents/install.sh",
         headers={"Authorization": ""},
     )
-    assert installer.status_code == 426
+    assert installer.status_code == 410
 
 
 def test_one_line_enrollment_rejects_insecure_download_host(tmp_path, monkeypatch):

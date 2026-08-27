@@ -1076,6 +1076,12 @@ function ClientsTab({
   const [enrollmentId, setEnrollmentId] = useState('')
   const [enrollmentExpiresAt, setEnrollmentExpiresAt] = useState(0)
   const [enrollmentStatus, setEnrollmentStatus] = useState<AgentEnrollmentStatus | null>(null)
+  const [enrollmentToken, setEnrollmentToken] = useState('')
+  const [enrollmentUrl, setEnrollmentUrl] = useState('')
+  const [publicUrl, setPublicUrl] = useState('')
+  const [controllerCa, setControllerCa] = useState('')
+  const [githubInstallUrl, setGithubInstallUrl] = useState('')
+  const [showToken, setShowToken] = useState(false)
   const [manualInstallIndex, setManualInstallIndex] = useState<number | null>(null)
   const [manualCommands, setManualCommands] = useState<ManualAgentInstallCommands | null>(null)
   const activeClientIndex = clientNavigation.clientIndex
@@ -1153,6 +1159,12 @@ function ClientsTab({
     setEnrollmentId('')
     setEnrollmentExpiresAt(0)
     setEnrollmentStatus(null)
+    setEnrollmentToken('')
+    setEnrollmentUrl('')
+    setPublicUrl('')
+    setControllerCa('')
+    setGithubInstallUrl('')
+    setShowToken(false)
   }
 
   const closeQuickInstall = () => {
@@ -1161,6 +1173,12 @@ function ClientsTab({
     setEnrollmentId('')
     setEnrollmentExpiresAt(0)
     setEnrollmentStatus(null)
+    setEnrollmentToken('')
+    setEnrollmentUrl('')
+    setPublicUrl('')
+    setControllerCa('')
+    setGithubInstallUrl('')
+    setShowToken(false)
   }
 
   const openManualInstall = (idx: number) => {
@@ -1200,9 +1218,14 @@ function ClientsTab({
       setInstallCommand(enrollment.install_command)
       setEnrollmentId(enrollment.enrollment_id)
       setEnrollmentExpiresAt(enrollment.expires_at)
+      setEnrollmentToken(enrollment.token || '')
+      setEnrollmentUrl(enrollment.enrollment_url || '')
+      setPublicUrl(enrollment.public_url || '')
+      setControllerCa(enrollment.controller_ca || '')
+      setGithubInstallUrl(enrollment.github_install_url || enrollment.install_command)
       setEnrollmentStatus({
         client_name: client.name,
-        agent_port: agentPort,
+        agent_port: enrollment.agent_port || agentPort,
         expires_at: enrollment.expires_at,
         status: 'pending',
       })
@@ -1772,9 +1795,9 @@ function ClientsTab({
               Install and pair {cfg.clients[installIndex].name}
             </h2>
             <p className="desc">
-              Generate a short one-time command, then run it on the Linux device. It securely fetches the installer
-              from Wolnut, verifies the agent binary checksum, runs directly as root or uses sudo when available,
-              installs the systemd service, and pairs over HTTPS automatically.
+              The installer is fetched directly from GitHub. Generate a one-time key and certificate, then run the
+              GitHub command on the device and paste the values when prompted. The installer verifies the server,
+              downloads the agent binary, pings Wolnut before finishing, and pairs automatically.
             </p>
             <div className="field">
               <label>Agent port</label>
@@ -1794,26 +1817,107 @@ function ClientsTab({
                 disabled={agentBusy || agentPort < 1 || agentPort > 65535}
                 onClick={generateInstallCommand}
               >
-                {agentBusy ? 'Generating...' : 'Generate one-time command'}
+                {agentBusy ? 'Generating...' : 'Generate one-time key & certificate'}
               </button>
             )}
 
             {installCommand && (
               <>
                 <div className="enrollment-warning">
-                  This command contains a single-use secret and expires at{' '}
-                  {new Date(enrollmentExpiresAt * 1000).toLocaleTimeString()}. Do not share or save it.
+                  One-time enrollment key and certificate expire at{' '}
+                  {new Date(enrollmentExpiresAt * 1000).toLocaleTimeString()}. Do not share or save them.
                 </div>
                 <div className="field">
-                  <label>Run on {cfg.clients[installIndex].host}</label>
+                  <label>1. Run on {cfg.clients[installIndex].host} (from GitHub)</label>
                   <textarea
                     className="install-command"
                     value={installCommand}
                     readOnly
-                    rows={4}
+                    rows={3}
                     spellCheck={false}
                   />
+                  <button
+                    className="btn btn-ghost btn-small"
+                    onClick={() => copyCommand(installCommand, 'GitHub install command')}
+                  >
+                    Copy GitHub command
+                  </button>
+                  {githubInstallUrl && (
+                    <span className="inline-help">
+                      Direct URL: <code>{githubInstallUrl}</code>
+                    </span>
+                  )}
                 </div>
+                <div className="field">
+                  <label>2. Enrollment key (paste when prompted)</label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      value={showToken ? enrollmentToken : enrollmentToken ? '•'.repeat(Math.min(enrollmentToken.length, 32)) : ''}
+                      readOnly
+                      style={{ flex: 1 }}
+                    />
+                    <button
+                      className="btn btn-ghost btn-small"
+                      onClick={() => setShowToken(v => !v)}
+                    >
+                      {showToken ? 'Hide' : 'Reveal'}
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-small"
+                      onClick={() => copyCommand(enrollmentToken, 'Enrollment key')}
+                    >
+                      Copy key
+                    </button>
+                  </div>
+                </div>
+                <div className="field">
+                  <label>3. Certificate / Server URL (paste when prompted)</label>
+                  <textarea
+                    className="install-command"
+                    value={enrollmentUrl || publicUrl}
+                    readOnly
+                    rows={2}
+                    spellCheck={false}
+                  />
+                  <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                    <button
+                      className="btn btn-ghost btn-small"
+                      onClick={() => copyCommand(enrollmentUrl || publicUrl, 'Enrollment URL')}
+                    >
+                      Copy enrollment URL
+                    </button>
+                    {publicUrl && publicUrl !== enrollmentUrl && (
+                      <button
+                        className="btn btn-ghost btn-small"
+                        onClick={() => copyCommand(publicUrl, 'Public URL')}
+                      >
+                        Copy public URL
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {controllerCa && (
+                  <div className="field">
+                    <label>Controller CA certificate</label>
+                    <textarea
+                      className="install-command"
+                      value={controllerCa}
+                      readOnly
+                      rows={6}
+                      spellCheck={false}
+                    />
+                    <button
+                      className="btn btn-ghost btn-small"
+                      onClick={() => copyCommand(controllerCa, 'Controller CA')}
+                    >
+                      Copy CA certificate
+                    </button>
+                  </div>
+                )}
+                <p className="desc">
+                  On the device the installer will ask for the enrollment URL and the one-time key shown above.
+                  It pings the Wolnut server before completing and verifies the service is active.
+                </p>
                 <div className="enrollment-status" aria-live="polite">
                   <span className={`badge ${enrollmentStatus?.status === 'paired' ? 'online' : ''}`}>
                     {enrollmentStatus?.status || 'pending'}
@@ -1824,12 +1928,6 @@ function ClientsTab({
                   {enrollmentStatus?.last_error && ` ${enrollmentStatus.last_error}`}
                 </div>
                 <div className="toolbar">
-                  <button
-                    className="btn btn-primary"
-                    onClick={() => copyCommand(installCommand, 'Install command')}
-                  >
-                    Copy command
-                  </button>
                   {enrollmentStatus
                     && isEnrollmentTerminal(enrollmentStatus.status)
                     && enrollmentStatus.status !== 'paired' && (
@@ -1840,6 +1938,11 @@ function ClientsTab({
                         setInstallCommand('')
                         setEnrollmentId('')
                         setEnrollmentStatus(null)
+                        setEnrollmentToken('')
+                        setEnrollmentUrl('')
+                        setPublicUrl('')
+                        setControllerCa('')
+                        setGithubInstallUrl('')
                       }}
                     >
                       Generate another
