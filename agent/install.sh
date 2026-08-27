@@ -78,22 +78,23 @@ done
 # ---------------------------------------------------------------------------
 # Interactive prompts (when not provided via flags)
 # ---------------------------------------------------------------------------
-# When run as `curl ... | bash` stdin is the script, not the terminal.
-# Reattach to /dev/tty so prompts work on Proxmox/root without sudo.
-if [ ! -t 0 ] && [ -e /dev/tty ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
-    # shellcheck disable=SC2094
-    exec < /dev/tty 2>/dev/null || true
-fi
-if [ ! -t 2 ] && [ -e /dev/tty ] && [ -w /dev/tty ]; then
-    exec 2> /dev/tty 2>/dev/null || true
-fi
-
 is_tty() {
-    [ -t 0 ] || { [ -e /dev/tty ] && [ -r /dev/tty ] && [ -w /dev/tty ]; }
+    [ -t 0 ]
 }
 
 has_interactive_terminal() {
-    is_tty
+    [ -t 0 ] && return 0
+    [ -t 1 ] && return 0
+    [ -t 2 ] && return 0
+    # When run as `curl ... | bash` stdin is the script, not the terminal.
+    # Check if /dev/tty can actually be opened (Proxmox case) without using exec
+    # that would fail under `set -eu` on CI where /dev/tty exists but is not usable.
+    if [ -e /dev/tty ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
+        if ( exec 3<> /dev/tty ) 2>/dev/null; then
+            return 0
+        fi
+    fi
+    return 1
 }
 
 trim() {
