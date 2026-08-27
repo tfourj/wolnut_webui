@@ -57,6 +57,24 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
+if [ "$(id -u)" -eq 0 ]; then
+    privilege_command=""
+elif command -v sudo >/dev/null 2>&1; then
+    privilege_command="sudo"
+else
+    printf '%s\n' \
+        'Root privileges are required and sudo is not installed.' \
+        'Log in as root (for example with "su -") and run the same install command again.' >&2
+    exit 1
+fi
+
+for command in curl sha256sum mktemp uname; do
+    if ! command -v "$command" >/dev/null 2>&1; then
+        echo "Required command not found: $command" >&2
+        exit 1
+    fi
+done
+
 # ---------------------------------------------------------------------------
 # Interactive prompts (when not provided via flags)
 # ---------------------------------------------------------------------------
@@ -190,24 +208,6 @@ if [ -n "$enrollment_url" ] || [ -n "$enrollment_token" ]; then
             ;;
     esac
 fi
-
-if [ "$(id -u)" -eq 0 ]; then
-    privilege_command=""
-elif command -v sudo >/dev/null 2>&1; then
-    privilege_command="sudo"
-else
-    printf '%s\n' \
-        'Root privileges are required and sudo is not installed.' \
-        'Log in as root (for example with "su -") and run the same install command again.' >&2
-    exit 1
-fi
-
-for command in curl sha256sum mktemp uname; do
-    if ! command -v "$command" >/dev/null 2>&1; then
-        echo "Required command not found: $command" >&2
-        exit 1
-    fi
-done
 
 # ---------------------------------------------------------------------------
 # Pre-flight: ping Wolnut server before downloading binary
