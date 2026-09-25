@@ -5,6 +5,7 @@ import {
   isCertificateFingerprintValid,
   isEnrollmentTerminal,
   isShutdownConfirmationValid,
+  isShutdownPillVisible,
   normalizeShutdownClient,
 } from './shutdownUi'
 
@@ -45,6 +46,15 @@ describe('secure shutdown UI guards', () => {
     expect(isEnrollmentTerminal('paired')).toBe(true)
     expect(isEnrollmentTerminal('failed')).toBe(true)
     expect(isEnrollmentTerminal('expired')).toBe(true)
+  })
+
+  it('shows the shutdown pill only when paired and enabled', () => {
+    expect(isShutdownPillVisible({ paired: true, enabled: true })).toBe(true)
+    expect(isShutdownPillVisible({ paired: true, enabled: false })).toBe(false)
+    expect(isShutdownPillVisible({ paired: false, enabled: true })).toBe(false)
+    expect(isShutdownPillVisible({ paired: false, enabled: false })).toBe(false)
+    expect(isShutdownPillVisible(undefined)).toBe(false)
+    expect(isShutdownPillVisible(null)).toBe(false)
   })
 
   it('detects only newer stable agent versions', () => {

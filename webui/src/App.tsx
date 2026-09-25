@@ -38,6 +38,7 @@ import {
   isCertificateFingerprintValid,
   isEnrollmentTerminal,
   isShutdownConfirmationValid,
+  isShutdownPillVisible,
   normalizeShutdownClient,
 } from './shutdownUi'
 
@@ -538,7 +539,7 @@ function Dashboard({ cfg, status, showToast }: { cfg: WolnutConfig | null; statu
                     {c.always_wake && (
                       <span style={{ background: '#2a2015', border: '1px solid #f1c40f', color: '#f1c40f', padding: '2px 8px', borderRadius: 999, fontSize: 11 }}>⚠ Always</span>
                     )}
-                    {c.shutdown?.paired && (
+                    {isShutdownPillVisible(c.shutdown) && (
                       <span className="shutdown-badge">
                         Power off at {c.shutdown.battery_percent}%
                       </span>

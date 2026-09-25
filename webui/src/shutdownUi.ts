@@ -24,6 +24,10 @@ export function normalizeShutdownClient(client: ClientConfig): ClientConfig {
   }
 }
 
+export function isShutdownPillVisible(shutdown?: { enabled?: boolean; paired?: boolean } | null): boolean {
+  return !!shutdown?.paired && !!shutdown?.enabled
+}
+
 export function isEnrollmentTerminal(status: AgentEnrollmentStatus['status']): boolean {
   return ['paired', 'failed', 'expired', 'superseded'].includes(status)
 }
