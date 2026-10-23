@@ -44,7 +44,7 @@ COPY . .
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --no-dev --no-editable
 
 # WebUI builder
-FROM --platform=${TARGETPLATFORM} node:20-slim AS web-builder
+FROM --platform=${TARGETPLATFORM} node:24-slim AS web-builder
 WORKDIR /webui
 COPY webui/package.json ./
 RUN npm install
