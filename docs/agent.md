@@ -177,7 +177,8 @@ safe, redacted error.
 
 Choose **Check for update** for an immediate check, or enable **Automatic agent
 updates** for that device. Enabling the toggle performs a check immediately;
-the agent then checks every six hours while the policy remains enabled. Policy
+the WebUI then asks the agent to update every six hours, and within about 15
+minutes of finding a newer release, while the policy remains enabled. Policy
 changes and manual checks require the same authenticated HTTPS administration
 controls as pairing and shutdown.
 

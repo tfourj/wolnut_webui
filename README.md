@@ -55,7 +55,8 @@ configuration afterward.
 Each paired device card shows the installed agent version and the latest
 version discovered from verified release metadata. **Check for update** starts
 a checksum-verified update immediately. **Automatic agent updates** is opt-in
-per device and checks when enabled and every six hours while the agent runs.
+per device and checks when enabled, every six hours, and within about 15
+minutes of the WebUI finding a newer release.
 The controller can request only this fixed update operation; it cannot provide
 a download URL, executable path, command, or arguments.
 
