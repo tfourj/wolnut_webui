@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
 from wolnut.agent_client import AgentError
-from wolnut.web import create_app
+from wolnut.web import _auto_update_due, _is_newer_version, create_app
 
 
 def write_config(path, **overrides):
@@ -656,3 +656,22 @@ def test_stale_config_save_cannot_overwrite_pairing(tmp_path, monkeypatch):
     assert response.status_code == 409
     saved = yaml.safe_load(config_path.read_text())
     assert saved["clients"][0]["shutdown"]["agent_id"] == "agent-new"
+
+
+def test_is_newer_version_compares_stable_versions():
+    assert _is_newer_version("0.1.9", "0.1.10")
+    assert not _is_newer_version("0.1.10", "0.1.10")
+    assert not _is_newer_version("0.2.0", "0.1.10")
+    assert not _is_newer_version("dev", "0.1.10")
+    assert not _is_newer_version(None, "0.1.10")
+
+
+def test_auto_update_due_after_interval():
+    assert _auto_update_due(21600, 0, 21600, "0.1.10", "0.1.10")
+    assert not _auto_update_due(21599, 0, 21600, "0.1.10", "0.1.10")
+
+
+def test_auto_update_due_soon_when_newer_release_exists():
+    assert _auto_update_due(1900, 1000, 21600, "0.1.9", "0.1.10")
+    assert not _auto_update_due(1899, 1000, 21600, "0.1.9", "0.1.10")
+    assert not _auto_update_due(1900, 1000, 21600, "0.1.9", None)
