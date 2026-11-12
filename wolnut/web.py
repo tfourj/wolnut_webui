@@ -856,14 +856,30 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
         except ValueError:
             interval = 21600
         interval = max(60, interval)
-        # track last triggered per client to avoid overlapping
+        # Tick often so a newly published release is installed soon, while
+        # _auto_update_due limits how often each agent is actually triggered.
+        tick = min(60, interval)
         last_triggered: dict[str, float] = {}
+
+        def _installed_versions() -> dict[str, Any]:
+            try:
+                data = json.loads(Path(st_path).read_text())
+            except Exception:
+                return {}
+            clients = data.get("clients", {}) if isinstance(data, dict) else {}
+            return {
+                name: (state.get("shutdown", {}) or {}).get("version")
+                for name, state in clients.items()
+                if isinstance(state, dict)
+            }
 
         def _loop() -> None:
             while True:
-                time.sleep(interval)
+                time.sleep(tick)
                 try:
                     raw_cfg = _read_config_or_default()
+                    latest_version = _get_global_latest().get("version")
+                    installed = _installed_versions()
                     for client in raw_cfg.get("clients", []) or []:
                         shutdown = client.get("shutdown", {}) or {}
                         if not shutdown.get("auto_update"):
@@ -874,8 +890,13 @@ def create_app(config_file: str | None = None, status_file: str | None = None) -
                         if not client.get("enabled", True):
                             continue
                         now = time.time()
-                        # avoid re-triggering too soon if previous was recent
-                        if now - last_triggered.get(client["name"], 0) < interval - 10:
+                        if not _auto_update_due(
+                            now,
+                            last_triggered.get(client["name"], 0),
+                            interval,
+                            installed.get(client["name"]),
+                            latest_version,
+                        ):
                             continue
                         last_triggered[client["name"]] = now
                         try:
