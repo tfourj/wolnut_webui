@@ -23,7 +23,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: agent/go.mod
+          go-version: stable
+          check-latest: true
           cache: false
       - name: Check formatting
         run: test -z "$(gofmt -l .)"
@@ -48,7 +49,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: agent/go.mod
+          go-version: stable
+          check-latest: true
           cache: false
       - name: Set up arm64 emulation
         if: matrix.arch == 'arm64'
