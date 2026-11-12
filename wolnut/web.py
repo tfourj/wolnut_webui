@@ -373,6 +373,31 @@ def _poller_should_run() -> bool:
     return True
 
 
+_AUTO_UPDATE_RETRY_SECONDS = 900
+
+
+def _is_newer_version(current: Any, available: Any) -> bool:
+    current = str(current or "").strip()
+    available = str(available or "").strip()
+    if not (_STABLE_VERSION_RE.match(current) and _STABLE_VERSION_RE.match(available)):
+        return False
+    return tuple(map(int, available.split("."))) > tuple(map(int, current.split(".")))
+
+
+def _auto_update_due(
+    now: float,
+    last_triggered: float,
+    interval: int,
+    installed_version: Any,
+    latest_version: Any,
+    retry_after: int = _AUTO_UPDATE_RETRY_SECONDS,
+) -> bool:
+    elapsed = now - last_triggered
+    if elapsed >= interval:
+        return True
+    return elapsed >= retry_after and _is_newer_version(installed_version, latest_version)
+
+
 def _global_latest_poller() -> None:
     if not _poller_should_run():
         return
