@@ -1,5 +1,10 @@
 # WOLNUT
 
+> [!IMPORTANT]
+> This repository is archived and no longer maintained. Development continues in
+> [WolUPS](https://github.com/tfourj/WolUPS), a rewrite with UPS monitoring, safe
+> shutdowns, and Wake-on-LAN.
+
 **WOLNUT** is a lightweight service that works alongside [NUT (Network UPS Tools)](https://networkupstools.org/) to safely shut down Linux devices as UPS charge falls and wake selected systems after power returns.
 
 wolnut... get it?
